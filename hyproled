@@ -1,154 +1,163 @@
 #!/bin/bash
+set -euo pipefail
 
-swap=false
-toggle=false
+shift_pixels=false
 invert=false
 monitor=0
+fill_color='0.0,0.0,0.0,1.0'
 
-fill_color='0.0, 0.0, 0.0, 1.0'
+STATE_FILE="/dev/shm/hyproled_shift.state"
+SHADER_FILE="/dev/shm/hyproled_shader.glsl"
 
-# debug
-# fill_color='255.0, 255.0, 255.0, 1.0'
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 
-
-show_help() {
-  echo "Usage: $(basename $0) [OPTION]... [off]"
-  echo ""
-  echo "Hyprland shader utility to prevent OLED burn in."
-  echo "Disables every other pixel"
-  echo ""
-  echo "version: 0.1.0"
-  echo ""
-  echo "Options:"
-  echo "  -a x:y:w:h  The effective area. Useful for bars. [Default: The entire screen]"
-  echo "  -i          Inverts the area. Useful for focus effect of a window or popup."
-  echo "  -s          Swap lit pixels. Useful to prevent burn in, when called periodically."
-  echo "  -m ID       Id of your oled monitor (hyprctl monitors). [Default: 0]."
-  echo "  -h          Display this help message."
-  echo ""
-  echo "Argument:"
-  echo "  off         Disables hyproled"
-}
-
-if [[ $1 == 'off' ]]; then
-  hyproled -a 0:0:0:0
-  exit 0;
+# Recover broken/stale Hyprland session env automatically
+if [[ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || \
+   [[ ! -S "$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket.sock" ]]; then
+    export HYPRLAND_INSTANCE_SIGNATURE="$(ls "$XDG_RUNTIME_DIR/hypr" | head -n1)"
 fi
 
-# Parse command-line options
+show_help() {
+cat <<EOF
+Usage: $(basename "$0") [OPTION]... [off]
+
+Hyprland shader utility to prevent OLED burn in.
+
+version: 0.2.0
+
+Options:
+  -a x:y:w:h  Effective area. Useful for bars.
+  -i          Invert selected area.
+  -s          Shift lit pixels between runs.
+  -m ID       Monitor ID from hyprctl monitors.
+  -h          Show this help.
+
+Argument:
+  off         Disable shader
+EOF
+}
+
+apply_shader() {
+    local shader_path="$1"
+
+    hyprctl eval \
+        "hl.config({ decoration = { screen_shader = [[${shader_path}]] } })"
+}
+
+disable_shader() {
+    hyprctl eval \
+        'hl.config({ decoration = { screen_shader = "" } })'
+}
+
+if [[ "${1:-}" == "off" ]]; then
+    disable_shader
+    exit 0
+fi
+
 while getopts ":a:ism:h" opt; do
-  case ${opt} in
-    a )
-      area=$OPTARG
-      ;;
-    s )
-      swap=true
-      ;;
-    i )
-      invert=true
-      ;;
-    m )
-      monitor=$OPTARG
-      ;;
-    h )
-      show_help
-      exit 0
-      ;;
-    \? )
-      echo "Invalid option: -$OPTARG" 1>&2
-      show_help
-      exit 1
-      ;;
-    : )
-      echo "Invalid option: -$OPTARG requires an argument" 1>&2
-      usage
-      exit 1
-      ;;
-  esac
+    case "$opt" in
+        a) area="$OPTARG" ;;
+        i) invert=true ;;
+        s) shift_pixels=true ;;
+        m) monitor="$OPTARG" ;;
+        h)
+            show_help
+            exit 0
+            ;;
+        *)
+            show_help
+            exit 1
+            ;;
+    esac
 done
 
-# Shift off the options and optional -- argument
-shift $((OPTIND -1))
+shift $((OPTIND - 1))
 
+# Alternate checkerboard offset
+if $shift_pixels; then
+    last_shift=0
 
-shader_template="
+    [[ -f "$STATE_FILE" ]] && read -r last_shift < "$STATE_FILE"
 
+    if (( last_shift == 0 )); then
+        shift_offset=1
+        echo 1 > "$STATE_FILE"
+    else
+        shift_offset=0
+        echo 0 > "$STATE_FILE"
+    fi
+else
+    shift_offset=0
+fi
+
+shader_code="#version 300 es
 precision highp float;
-varying vec2 v_texcoord;
+
+in vec2 v_texcoord;
+
 uniform sampler2D tex;
 uniform int wl_output;
 
-void main() {
-    vec4 originalColor = texture2D(tex, v_texcoord);
+layout(location = 0) out vec4 fragColor;
 
-    if(wl_output != $monitor) {
-      gl_FragColor = originalColor;
-      return;
+void main() {
+    vec4 orig = texture(tex, v_texcoord);
+
+    if (wl_output != ${monitor}) {
+        fragColor = orig;
+        return;
     }
 
-    vec2 fragCoord = gl_FragCoord.xy;
-    bool isEvenPixel = mod(fragCoord.x + fragCoord.y, 2.0) == 0.0;
+    vec2 fc = gl_FragCoord.xy;
 
-    {{color}}
+    bool even =
+        mod(fc.x + fc.y + float(${shift_offset}), 2.0) == 0.0;
 
-    {{setter}}
+    vec4 pixel =
+        even ? orig : vec4(${fill_color});
+"
+
+if [[ -n "${area:-}" ]]; then
+    if [[ "$area" =~ ^([0-9]+):([0-9]+):([0-9]+):([0-9]+)$ ]]; then
+
+        x="${BASH_REMATCH[1]}"
+        y="${BASH_REMATCH[2]}"
+        w="${BASH_REMATCH[3]}"
+        h="${BASH_REMATCH[4]}"
+
+shader_code+="
+    bool inRegion =
+        (fc.x >= ${x}.0 &&
+         fc.x <= (${x}.0 + ${w}.0) &&
+         fc.y >= ${y}.0 &&
+         fc.y <= (${y}.0 + ${h}.0));
+"
+
+        if $invert; then
+shader_code+="
+    fragColor = inRegion ? orig : pixel;
+"
+        else
+shader_code+="
+    fragColor = inRegion ? pixel : orig;
+"
+        fi
+
+shader_code+="
 }
 "
 
-setter="gl_FragColor = color;"
-
-
-if [ -n "$area" ]; then
-
-    regex='^[0-9]+:[0-9]+:[0-9]+:[0-9]+$'
-
-    if [[ $area =~ $regex ]]; then
-        # Split the input into variables
-        IFS=':' read -r x y w h <<< "$area"
-
-        if $invert ; then
-          active=originalColor
-          inactive=color
-        else
-          active=color
-          inactive=originalColor
-        fi
-
-        setter="
-        // Check if the current pixel is within the rectangle
-        if (fragCoord.x >= $x.0 \&\& fragCoord.x <= $x.0 + $w.0 \&\&
-            fragCoord.y >= $y.0 \&\& fragCoord.y <= $y.0 + $h.0) {
-            gl_FragColor = $active;
-        } else {
-            gl_FragColor = $inactive;
-        }
-      "
-
     else
-        echo "Invalid area format. Please use the format x:y:w:h."
+        echo "Invalid area format. Use x:y:w:h" >&2
         exit 1
     fi
-
-    
+else
+shader_code+="
+    fragColor = pixel;
+}
+"
 fi
-shader_template="${shader_template//\{\{setter\}\}/$setter}"
 
-color="vec4 color = isEvenPixel ? originalColor : vec4($fill_color);"
-tmp_shader_name="hyproled_shader.glsl"
+printf '%s\n' "$shader_code" > "$SHADER_FILE"
 
-# swap
-if $swap && $(hyprctl getoption decoration:screen_shader | grep -q $tmp_shader_name); then
-  tmp_shader_name="hyproled_shader_swapped.glsl"
-  color="vec4 color = isEvenPixel ? vec4($fill_color) : originalColor;"
-fi
-shader_template="${shader_template//\{\{color\}\}/$color}"
-
-
-# write shader to ram
-temp_file="/dev/shm/$tmp_shader_name"
-touch $temp_file
-
-echo "$shader_template" > "$temp_file"
-
-# set shader
-hyprctl keyword decoration:screen_shader $temp_file
+apply_shader "$SHADER_FILE"
