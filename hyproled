@@ -5,13 +5,23 @@ fill_color='0.0,0.0,0.0,1.0'
 STATE_FILE="/dev/shm/hyproled_shift.state"
 SHADER_FILE="/dev/shm/hyproled_shader.glsl"
 
+# Detect hyprland version: hl.config() requires v0.55+
+_HYPR_MINOR=$(hyprctl version 2>/dev/null | grep -oP 'Hyprland 0\.\K[0-9]+')
+if (( _HYPR_MINOR >= 55 )); then
+  _set_shader() { hyprctl eval "hl.config({ decoration = { screen_shader = [[$1]] } })"; }
+  _clear_shader() { hyprctl eval 'hl.config({ decoration = { screen_shader = "" } })'; }
+else
+  _set_shader() { hyprctl keyword decoration:screen_shader "$1"; }
+  _clear_shader() { hyprctl keyword decoration:screen_shader ""; }
+fi
+
 show_help(){
   cat <<EOF
 Usage: $(basename $0) [OPTION]... [off]
 
 Hyprland shader utility to prevent OLED burn in.
 
-version: 0.1.3
+version: 0.1.4
 
 Options:
   -a x:y:w:h  The effective area. Useful for bars. [Default: The entire screen]
@@ -26,7 +36,7 @@ EOF
 }
 
 if [[ $1 == off ]]; then
-  hyprctl --instance 0 keyword decoration:screen_shader ""
+  _clear_shader
   exit 0
 fi
 
@@ -98,4 +108,4 @@ fi
 echo "$shader_code" > "$SHADER_FILE"
 
 
-hyprctl --instance 0 keyword decoration:screen_shader "$SHADER_FILE"
+_set_shader "$SHADER_FILE"

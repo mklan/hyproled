@@ -4,46 +4,46 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: 'Version bump type'
+        description: "Version bump type"
         required: true
         type: choice
         options:
           - patch
           - minor
           - major
-        default: 'patch'
+        default: "patch"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required for creating tags, committing, and creating releases
-      
+      contents: write # Required for creating tags, committing, and creating releases
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-      
+
       - name: Get current version
         id: get_version
         run: |
           CURRENT_VERSION=$(grep -oP 'version: \K[0-9]+\.[0-9]+\.[0-9]+' hyproled)
           echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "Current version: $CURRENT_VERSION"
-      
+
       - name: Calculate new version
         id: calc_version
         run: |
           VERSION="${{ steps.get_version.outputs.current_version }}"
           IFS='.' read -r major minor patch <<< "$VERSION"
-          
+
           case "${{ github.event.inputs.version_bump }}" in
             major)
               major=$((major + 1))
@@ -58,23 +58,23 @@ jobs:
               patch=$((patch + 1))
               ;;
           esac
-          
+
           NEW_VERSION="${major}.${minor}.${patch}"
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
-      
+
       - name: Update version in hyproled script
         run: |
           sed -i "s/version: [0-9]\+\.[0-9]\+\.[0-9]\+/version: ${{ steps.calc_version.outputs.new_version }}/" hyproled
           git add hyproled
           git commit -m "Bump version to ${{ steps.calc_version.outputs.new_version }}"
           git push
-      
+
       - name: Create Git tag
         run: |
           git tag -a "v${{ steps.calc_version.outputs.new_version }}" -m "Release v${{ steps.calc_version.outputs.new_version }}"
           git push origin "v${{ steps.calc_version.outputs.new_version }}"
-      
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -82,17 +82,17 @@ jobs:
           name: Release v${{ steps.calc_version.outputs.new_version }}
           body: |
             ## Release v${{ steps.calc_version.outputs.new_version }}
-            
+
             ### Changes
             This is a ${{ github.event.inputs.version_bump }} version release.
-            
+
             ### Installation
-            
+
             #### AUR (Arch Linux)
             ```bash
             yay -S hyproled-git
             ```
-            
+
             #### Manual Installation
             ```bash
             sudo cp hyproled /usr/bin/hyproled
@@ -100,7 +100,7 @@ jobs:
           draft: false
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Deploy to AUR
         if: ${{ secrets.AUR_SSH_KEY != '' }}
         env:
@@ -130,22 +130,22 @@ jobs:
           fi
           MAKEPKG_SCRIPT
           sudo chmod +x /usr/local/bin/makepkg
-          
+
           # Setup SSH for AUR
           mkdir -p ~/.ssh
           printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
-          
+
           # Add AUR host key to known_hosts for security
           ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
-          
+
           # Configure SSH to use the key for AUR
           cat >> ~/.ssh/config <<EOF
           Host aur.archlinux.org
             IdentityFile ~/.ssh/aur
             User aur
           EOF
-          
+
           # Clone AUR repository
           if git clone ssh://aur@aur.archlinux.org/hyproled-git.git aur-repo; then
             cd aur-repo
@@ -154,11 +154,9 @@ jobs:
             # Get the latest commit hash
             COMMIT_HASH=$(git -C .. rev-parse HEAD)
             
-            # Update PKGBUILD with new information
-            # Increment pkgrel
-            CURRENT_PKGREL=$(grep -oP 'pkgrel=\K[0-9]+' PKGBUILD || echo "0")
-            NEW_PKGREL=$((CURRENT_PKGREL + 1))
-            sed -i "s/pkgrel=[0-9]\+/pkgrel=${NEW_PKGREL}/" PKGBUILD
+            # Update PKGBUILD: bump pkgver to new version, reset pkgrel to 1
+            sed -i "s/pkgver=[0-9.]*/pkgver=${{ steps.calc_version.outputs.new_version }}/" PKGBUILD
+            sed -i "s/pkgrel=[0-9]*/pkgrel=1/" PKGBUILD
             
             # Update .SRCINFO
             makepkg --printsrcinfo > .SRCINFO
