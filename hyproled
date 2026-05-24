@@ -21,7 +21,7 @@ Usage: $(basename $0) [OPTION]... [off]
 
 Hyprland shader utility to prevent OLED burn in.
 
-version: 0.1.4
+version: 0.1.5
 
 Options:
   -a x:y:w:h  The effective area. Useful for bars. [Default: The entire screen]
