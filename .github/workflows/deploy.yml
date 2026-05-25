@@ -21,6 +21,7 @@ jobs:
       contents: write # Required for creating tags, committing, and creating releases
     env:
       AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+      AUR_SSH_PASSPHRASE: ${{ secrets.AUR_SSH_PASSPHRASE }}
 
     steps:
       - name: Checkout repository
@@ -151,6 +152,14 @@ jobs:
           # Configure SSH to use the key for AUR
           printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n  StrictHostKeyChecking yes\n' >> ~/.ssh/config
           chmod 600 ~/.ssh/config
+
+          # Start ssh-agent and add key (handles passphrase-protected keys)
+          eval "$(ssh-agent -s)"
+          if [[ -n "$AUR_SSH_PASSPHRASE" ]]; then
+            printf '%s\n' "$AUR_SSH_PASSPHRASE" | SSH_ASKPASS_REQUIRE=force SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/aur
+          else
+            ssh-add ~/.ssh/aur
+          fi
 
           # Clone AUR repository
           if git clone ssh://aur@aur.archlinux.org/hyproled-git.git aur-repo; then
