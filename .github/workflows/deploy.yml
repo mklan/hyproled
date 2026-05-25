@@ -8,10 +8,11 @@ on:
         required: true
         type: choice
         options:
+          - none
           - patch
           - minor
           - major
-        default: "patch"
+        default: "none"
 
 jobs:
   deploy:
@@ -59,6 +60,9 @@ jobs:
             patch)
               patch=$((patch + 1))
               ;;
+            none)
+              # No bump — release the current version as-is
+              ;;
           esac
 
           NEW_VERSION="${major}.${minor}.${patch}"
@@ -66,6 +70,7 @@ jobs:
           echo "New version: $NEW_VERSION"
 
       - name: Update version in hyproled script
+        if: github.event.inputs.version_bump != 'none'
         run: |
           sed -i "s/version: [0-9]\+\.[0-9]\+\.[0-9]\+/version: ${{ steps.calc_version.outputs.new_version }}/" hyproled
           git add hyproled
@@ -77,11 +82,15 @@ jobs:
           git tag -a "v${{ steps.calc_version.outputs.new_version }}" -m "Release v${{ steps.calc_version.outputs.new_version }}"
           git push origin "v${{ steps.calc_version.outputs.new_version }}"
 
+      - name: Prepare release asset
+        run: chmod +x hyproled
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.calc_version.outputs.new_version }}
           name: Release v${{ steps.calc_version.outputs.new_version }}
+          files: hyproled
           body: |
             ## Release v${{ steps.calc_version.outputs.new_version }}
 
@@ -140,11 +149,8 @@ jobs:
           ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
 
           # Configure SSH to use the key for AUR
-          cat >> ~/.ssh/config <<EOF
-          Host aur.archlinux.org
-            IdentityFile ~/.ssh/aur
-            User aur
-          EOF
+          printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n  StrictHostKeyChecking yes\n' >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
           # Clone AUR repository
           if git clone ssh://aur@aur.archlinux.org/hyproled-git.git aur-repo; then
