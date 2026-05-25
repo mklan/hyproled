@@ -153,13 +153,12 @@ jobs:
           printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n  StrictHostKeyChecking yes\n' >> ~/.ssh/config
           chmod 600 ~/.ssh/config
 
-          # Start ssh-agent and add key (handles passphrase-protected keys)
+          # Strip passphrase from key (if set), then load into ssh-agent
           eval "$(ssh-agent -s)"
           if [[ -n "$AUR_SSH_PASSPHRASE" ]]; then
-            printf '%s\n' "$AUR_SSH_PASSPHRASE" | SSH_ASKPASS_REQUIRE=force SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/aur
-          else
-            ssh-add ~/.ssh/aur
+            ssh-keygen -p -P "$AUR_SSH_PASSPHRASE" -N "" -f ~/.ssh/aur
           fi
+          ssh-add ~/.ssh/aur
 
           # Clone AUR repository
           if git clone ssh://aur@aur.archlinux.org/hyproled-git.git aur-repo; then
