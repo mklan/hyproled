@@ -5,9 +5,18 @@ fill_color='0.0,0.0,0.0,1.0'
 STATE_FILE="/dev/shm/hyproled_shift.state"
 SHADER_FILE="/dev/shm/hyproled_shader.glsl"
 
-# Detect hyprland version: hl.config() requires v0.55+
+# Detect hyprland version and whether eval (Lua config manager) is supported.
+# hyprctl eval requires both Hyprland >= 0.55 AND the Lua config manager.
+# hyprctl exits 0 even when eval is unsupported, so check the output directly.
 _HYPR_MINOR=$(hyprctl version 2>/dev/null | grep -oP 'Hyprland 0\.\K[0-9]+')
+_USE_EVAL=false
 if (( _HYPR_MINOR >= 55 )); then
+  if ! hyprctl eval '' 2>&1 | grep -q 'only supported with the lua config manager'; then
+    _USE_EVAL=true
+  fi
+fi
+
+if $_USE_EVAL; then
   _set_shader() { hyprctl eval "hl.config({ decoration = { screen_shader = [[$1]] } })"; }
   _clear_shader() { hyprctl eval 'hl.config({ decoration = { screen_shader = "" } })'; }
 else
