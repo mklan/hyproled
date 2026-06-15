@@ -4,6 +4,14 @@ fill_color='0.0,0.0,0.0,1.0'
 
 STATE_FILE="/dev/shm/hyproled_shift.state"
 SHADER_FILE="/dev/shm/hyproled_shader.glsl"
+LOCK_FILE="/dev/shm/hyproled.lock"
+
+# Prevent concurrent executions from racing on the shared state/shader files.
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+  echo "hyproled is already running" >&2
+  exit 0
+fi
 
 # Detect hyprland version and whether eval (Lua config manager) is supported.
 # hyprctl eval requires both Hyprland >= 0.55 AND the Lua config manager.
@@ -114,7 +122,8 @@ else
 "
 fi
 
-echo "$shader_code" > "$SHADER_FILE"
-
+SHADER_FILE_TMP="${SHADER_FILE}.tmp.$$"
+printf '%s\n' "$shader_code" > "$SHADER_FILE_TMP"
+mv -f "$SHADER_FILE_TMP" "$SHADER_FILE"
 
 _set_shader "$SHADER_FILE"
