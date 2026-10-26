@@ -1,14 +1,32 @@
 #!/bin/bash
-shift=false; invert=false; monitor=0
+shift=false; invert=false; monitor=0; off_pixels=1
 fill_color='0.0,0.0,0.0,1.0'
 
 STATE_FILE="/dev/shm/hyproled_shift.state"
 SHADER_FILE="/dev/shm/hyproled_shader.glsl"
 
+# Allow running outside a Hyprland session (e.g. from cron or systemd timers).
+# hyprctl refuses to talk to the compositor without these variables and still
+# exits 0 on failure, so fall back to the runtime dir and auto-detect the
+# instance (the first one with a live IPC socket, skipping stale leftovers).
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  for sock in "$XDG_RUNTIME_DIR"/hypr/*/.socket.sock; do
+    [[ -S $sock ]] || continue
+    sig=${sock%/.socket.sock}
+    export HYPRLAND_INSTANCE_SIGNATURE="${sig##*/}"
+    break
+  done
+fi
+
 # Detect hyprland version and whether eval (Lua config manager) is supported.
 # hyprctl eval requires both Hyprland >= 0.55 AND the Lua config manager.
 # hyprctl exits 0 even when eval is unsupported, so check the output directly.
-_HYPR_MINOR=$(hyprctl version 2>/dev/null | grep -oP 'Hyprland 0\.\K[0-9]+')
+_HYPR_VERSION=$(hyprctl version 2>/dev/null)
+if [[ $_HYPR_VERSION != *Hyprland* ]]; then
+  echo "hyproled: cannot connect to a running Hyprland instance" >&2; exit 1
+fi
+_HYPR_MINOR=$(grep -oP 'Hyprland 0\.\K[0-9]+' <<< "$_HYPR_VERSION")
 _USE_EVAL=false
 if (( _HYPR_MINOR >= 55 )); then
   if ! hyprctl eval '' 2>&1 | grep -q 'only supported with the lua config manager'; then
@@ -35,7 +53,9 @@ version: 0.1.5
 Options:
   -a x:y:w:h  The effective area. Useful for bars. [Default: The entire screen]
   -i          Inverts the area. Useful for focus effect of a window or popup.
-  -s          Shift lit pixels. Useful to prevent burn in, when called periodically.
+  -o N        How many pixels of each 2x2 block are turned off (1-3). [Default: 1]
+  -s          Swap the off pixels to the next of 4 positions. Useful to prevent
+              burn in, when called periodically (e.g. every 15 minutes).
   -m ID       Id of your oled monitor (hyprctl monitors). [Default: 0]
   -h          Display this help message.
 
@@ -49,10 +69,11 @@ if [[ $1 == off ]]; then
   exit 0
 fi
 
-while getopts ":a:ism:h" opt; do
+while getopts ":a:io:sm:h" opt; do
   case $opt in
     a) area=$OPTARG ;;
     i) invert=true ;;
+    o) off_pixels=$OPTARG ;;
     s) shift=true ;;
     m) monitor=$OPTARG ;;
     h) show_help; exit 0 ;;
@@ -61,20 +82,19 @@ while getopts ":a:ism:h" opt; do
 done
 shift $((OPTIND-1))
 
+# 4 is not allowed: turning off all 4 pixels of a block would blank the display.
+if [[ ! $off_pixels =~ ^[1-3]$ ]]; then
+  echo "Invalid off pixel count, use a number between 1 and 3" >&2; exit 1
+fi
 
-# Compute shift offset
+# The 2x2 pixel block is walked through in 4 steps, one off position at a time.
+# Each -s call advances the rotation by one step and persists it.
+phase=0
+[[ -f $STATE_FILE ]] && read -r phase < "$STATE_FILE"
+[[ $phase =~ ^[0-3]$ ]] || phase=0
 if $shift; then
-  last_shift=0
-  [[ -f $STATE_FILE ]] && read -r last_shift < "$STATE_FILE"
-  if (( last_shift == 0 )); then
-    shift_offset=1
-    echo 1 > "$STATE_FILE"
-  else
-    shift_offset=0
-    echo 0 > "$STATE_FILE"
-  fi
-else
-  shift_offset=0
+  phase=$(( (phase + 1) % 4 ))
+  echo "$phase" > "$STATE_FILE"
 fi
 
 shader_code="#version 300 es
@@ -87,8 +107,9 @@ void main(){
   vec4 orig = texture(tex, v_texcoord);
   if(wl_output != ${monitor}) { fragColor = orig; return; }
   vec2 fc = gl_FragCoord.xy;
-  bool even = mod(fc.x + fc.y + float(${shift_offset}),2.0)==0.0;
-  vec4 pixel = even ? orig : vec4(${fill_color});
+  float pos = mod(fc.x, 2.0) + 2.0 * mod(fc.y, 2.0);
+  bool off = mod(pos - float(${phase}), 4.0) < float(${off_pixels});
+  vec4 pixel = off ? vec4(${fill_color}) : orig;
 "
 
 if [[ -n $area ]]; then

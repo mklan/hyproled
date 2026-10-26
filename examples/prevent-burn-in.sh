@@ -2,7 +2,8 @@
 
 # Call me every now and then using cron
 
-# Render overlay over bar (swap each call)
+# Render overlay over bar (rotates the off pixel through 4 positions,
+# call me every 15 minutes so one iteration takes an hour)
 hyproled -s -a 0:0:2880:46
 
 # More precoutions in addition to hyproled

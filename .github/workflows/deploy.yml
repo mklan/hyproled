@@ -96,7 +96,7 @@ jobs:
             ## Release v${{ steps.calc_version.outputs.new_version }}
 
             ### Changes
-            This is a ${{ github.event.inputs.version_bump }} version release.
+            See the [commit history](${{ github.server_url }}/${{ github.repository }}/commits/v${{ steps.calc_version.outputs.new_version }}) for a list of changes.
 
             ### Installation
 
