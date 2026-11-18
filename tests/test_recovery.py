@@ -132,7 +132,7 @@ class RuntimeOffRecoveryTests(unittest.TestCase):
             "brightnessCompensationEnabled": True,
         }
 
-    def run_off(self, preferences):
+    def run_off(self, preferences, *, current_brightness=160):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime_dir = root / "runtime"
@@ -153,7 +153,9 @@ class RuntimeOffRecoveryTests(unittest.TestCase):
             )
 
             brightness_file = root / "brightness"
-            brightness_file.write_text("160", encoding="utf-8")
+            brightness_file.write_text(
+                str(current_brightness), encoding="utf-8"
+            )
 
             state = {
                 "version": 5,
@@ -333,6 +335,22 @@ esac
         )
         self.assertFalse(preferences["maskEnabled"])
         self.assertFalse(preferences["pixelShift"])
+
+    def test_off_preserves_manual_brightness_adjustment(self):
+        result = self.run_off(
+            self.valid_preferences(),
+            current_brightness=180,
+        )
+
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertFalse(result["state_exists"])
+        self.assertEqual(result["shader"], "")
+        self.assertEqual(result["brightness"], "130")
+        self.assertFalse(result["active_shader_exists"])
 
 
 if __name__ == "__main__":
