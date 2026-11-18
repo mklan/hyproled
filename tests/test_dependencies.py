@@ -26,7 +26,7 @@ class LazyBrightnessDependencyTests(unittest.TestCase):
 
         # Keep the test PATH isolated: brightnessctl is deliberately absent.
         commands = (
-            "bash", "env", "id", "jq", "flock", "mktemp",
+            "bash", "cat", "env", "id", "jq", "flock", "mktemp",
             "mv", "rm", "chmod", "mkdir", "cp", "sha256sum", "awk",
         )
         for name in commands:
