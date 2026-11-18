@@ -44,6 +44,7 @@ BRIGHTNESS_RESTORE_REQUESTED=false
 RESTORE_REQUESTED=false
 OFF_PIXELS_ENABLE_MASK=true
 DEFAULTS_HASH=""
+SAVE_PREFERENCES_ON_OFF=false
 SHADER_ONLY=false
 
 CLI_AREA=""
@@ -732,7 +733,12 @@ load_state() {
   state_compensation_preference=$(jq -r 'if .brightnessCompensationEnabled == null then "" else .brightnessCompensationEnabled end' "$STATE_FILE")
   if [[ -n "$state_compensation_preference" ]]; then BRIGHTNESS_COMPENSATION_ENABLED="$state_compensation_preference"; fi
   # The compensation table is declarative; always use the current Nix config.
-  COMPENSATION_MAP="$CONFIG_COMPENSATION_MAP"
+  # Recovery must remain possible when the current Nix config is unavailable.
+  if [[ -n "$CONFIG_COMPENSATION_MAP" ]]; then
+    COMPENSATION_MAP="$CONFIG_COMPENSATION_MAP"
+  else
+    COMPENSATION_MAP=$(jq -c '.compensationPercentOfMaxByPixelCount // {}' "$STATE_FILE")
+  fi
   PREVIOUS_SHADER=$(jq -r '.previousShader' "$STATE_FILE")
   ACTIVE_SHADER=$(jq -r '.activeShader' "$STATE_FILE")
   RESTORE_TARGET=$(jq -r '.restoreTarget // ""' "$STATE_FILE")
@@ -914,25 +920,31 @@ save_preferences() {
   mv -f -- "$tmp" "$PREFERENCES_FILE"
 }
 
+validate_preferences() {
+  [[ -r "$PREFERENCES_FILE" ]] || return 1
+
+  jq -e '
+    type == "object" and .version == 1 and
+    (.defaultsHash | type == "string") and
+    (.maskEnabled | type == "boolean") and
+    (.pixelShift | type == "boolean") and
+    (.pixelShiftMode | type == "string" and (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
+    (.pixelShiftIndex | type == "number" and floor == . and . >= 0 and . <= 8) and
+    (.phase | type == "number" and floor == . and . >= 0 and . <= 3) and
+    (.offPixels | type == "number" and floor == . and . >= 1 and . <= 3) and
+    (.monitor | type == "number" and floor == . and . >= 0) and
+    (.area == null or (.area | type == "string")) and
+    (.invert | type == "boolean") and
+    (.brightnessCompensationEnabled | type == "boolean")
+  ' "$PREFERENCES_FILE" >/dev/null 2>&1
+}
+
 load_preferences() {
   local stored_hash
   DEFAULTS_HASH=$(jq -cS '{defaults: .defaults, brightnessEnabled: .brightness.enabled}' "$CONFIG_FILE" | sha256sum | awk '{print $1}')
 
   if [[ -e "$PREFERENCES_FILE" ]]; then
-    jq -e '
-      type == "object" and .version == 1 and
-      (.defaultsHash | type == "string") and
-      (.maskEnabled | type == "boolean") and
-      (.pixelShift | type == "boolean") and
-      (.pixelShiftMode | type == "string" and (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
-      (.pixelShiftIndex | type == "number" and floor == . and . >= 0 and . <= 8) and
-      (.phase | type == "number" and floor == . and . >= 0 and . <= 3) and
-      (.offPixels | type == "number" and floor == . and . >= 1 and . <= 3) and
-      (.monitor | type == "number" and floor == . and . >= 0) and
-      (.area == null or (.area | type == "string")) and
-      (.invert | type == "boolean") and
-      (.brightnessCompensationEnabled | type == "boolean")
-    ' "$PREFERENCES_FILE" >/dev/null || die "preferences file is invalid; refusing to overwrite it: $PREFERENCES_FILE"
+    validate_preferences || die "preferences file is invalid; refusing to overwrite it: $PREFERENCES_FILE"
 
     stored_hash=$(jq -r '.defaultsHash' "$PREFERENCES_FILE")
     if [[ "$stored_hash" == "$DEFAULTS_HASH" || -f "$STATE_FILE" ]]; then
@@ -1205,8 +1217,21 @@ if [[ "$ACTION" == "enable" && "$MASK_SET" == true && "$CLI_MASK_ENABLED" == fal
 fi
 
 if [[ "$ACTION" == "off" ]]; then
-  load_config
-  load_preferences
+  SAVE_PREFERENCES_ON_OFF=false
+
+  if [[ -f "$STATE_FILE" ]]; then
+    if validate_preferences; then
+      DEFAULTS_HASH=$(jq -r '.defaultsHash' "$PREFERENCES_FILE")
+      SAVE_PREFERENCES_ON_OFF=true
+    else
+      warn "runtime recovery will proceed without modifying missing or invalid preferences"
+    fi
+    load_state
+  else
+    load_config
+    load_preferences
+  fi
+
   if [[ ! -f "$STATE_FILE" ]]; then
     setup_hyprland
     current_shader=$(get_current_shader) || die "cannot inspect the active screen shader"
@@ -1224,7 +1249,6 @@ if [[ "$ACTION" == "off" ]]; then
     exit 0
   fi
 
-  load_state
   if [[ "$STATUS" != "restoring" ]]; then
     setup_hyprland
     current_shader=$(get_current_shader) || die "cannot inspect the active screen shader; brightness was not changed"
@@ -1257,7 +1281,9 @@ if [[ "$ACTION" == "off" ]]; then
   fi
   MASK_ENABLED=false
   PIXEL_SHIFT=false
-  save_preferences || die "could not save preferences while disabling effects"
+  if [[ "$SAVE_PREFERENCES_ON_OFF" == true ]]; then
+    save_preferences || die "could not save preferences while disabling effects"
+  fi
   rm -f -- "$STATE_FILE" || die "could not remove state file $STATE_FILE"
   if is_our_shader_path "$ACTIVE_SHADER"; then rm -f -- "$ACTIVE_SHADER"; fi
   notify_waybar
