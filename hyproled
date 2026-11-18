@@ -627,7 +627,6 @@ fi
 
 need_command jq
 need_command flock
-need_command brightnessctl
 need_command hyprctl
 need_command mktemp
 need_command mv
@@ -808,6 +807,7 @@ save_state() {
 }
 
 get_brightness() {
+  need_command brightnessctl
   local value
   value=$(brightnessctl -d "$BRIGHTNESS_DEVICE" get 2>/dev/null) || return 1
   [[ "$value" =~ ^[0-9]+$ ]] || return 1
@@ -815,6 +815,7 @@ get_brightness() {
 }
 
 get_brightness_max() {
+  need_command brightnessctl
   local value
   value=$(brightnessctl -d "$BRIGHTNESS_DEVICE" max 2>/dev/null) || return 1
   [[ "$value" =~ ^[0-9]+$ ]] || return 1
@@ -822,6 +823,7 @@ get_brightness_max() {
 }
 
 set_brightness() {
+  need_command brightnessctl
   local requested="$1"
   brightnessctl -d "$BRIGHTNESS_DEVICE" set "$requested" >/dev/null || return 1
   get_brightness
@@ -1448,14 +1450,21 @@ if [[ -f "$STATE_FILE" ]]; then
     BRIGHTNESS_DEVICE="$CONFIG_BRIGHTNESS_DEVICE"
     COMPENSATION_MAP="$CONFIG_COMPENSATION_MAP"
 
-    current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
-    current_max=$(get_brightness_max) || die "cannot read maximum brightness from '$BRIGHTNESS_DEVICE'"
-    (( current_max > 0 )) || die "brightness device '$BRIGHTNESS_DEVICE' reported an invalid maximum"
+    if [[ "$BRIGHTNESS_ENABLED" == true ]]; then
+      current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
+      current_max=$(get_brightness_max) || die "cannot read maximum brightness from '$BRIGHTNESS_DEVICE'"
+      (( current_max > 0 )) || die "brightness device '$BRIGHTNESS_DEVICE' reported an invalid maximum"
 
-    BRIGHTNESS_ORIGINAL="$current_brightness"
-    BRIGHTNESS_MAX="$current_max"
-    BRIGHTNESS_APPLIED="$current_brightness"
+      BRIGHTNESS_ORIGINAL="$current_brightness"
+      BRIGHTNESS_MAX="$current_max"
+      BRIGHTNESS_APPLIED="$current_brightness"
+    else
+      BRIGHTNESS_ORIGINAL=0
+      BRIGHTNESS_MAX=1
+      BRIGHTNESS_APPLIED=0
+    fi
   elif [[ "$MASK_ENABLED" == true &&
+          "$BRIGHTNESS_ENABLED" == true &&
           "$MASK_STEP" != true &&
           "$SHADER_ONLY" != true ]]; then
     current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
@@ -1472,11 +1481,17 @@ else
 
   if [[ "$MASK_ENABLED" == true ]]; then
     BRIGHTNESS_ENABLED="$BRIGHTNESS_COMPENSATION_ENABLED"
-    current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
-    BRIGHTNESS_ORIGINAL="$current_brightness"
-    BRIGHTNESS_MAX=$(get_brightness_max) || die "cannot read maximum brightness from '$BRIGHTNESS_DEVICE'"
-    (( BRIGHTNESS_MAX > 0 )) || die "brightness device '$BRIGHTNESS_DEVICE' reported an invalid maximum"
-    BRIGHTNESS_APPLIED="$current_brightness"
+    if [[ "$BRIGHTNESS_ENABLED" == true ]]; then
+      current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
+      BRIGHTNESS_ORIGINAL="$current_brightness"
+      BRIGHTNESS_MAX=$(get_brightness_max) || die "cannot read maximum brightness from '$BRIGHTNESS_DEVICE'"
+      (( BRIGHTNESS_MAX > 0 )) || die "brightness device '$BRIGHTNESS_DEVICE' reported an invalid maximum"
+      BRIGHTNESS_APPLIED="$current_brightness"
+    else
+      BRIGHTNESS_ORIGINAL=0
+      BRIGHTNESS_MAX=1
+      BRIGHTNESS_APPLIED=0
+    fi
   else
     # Pixel Shift-only sessions do not own or restore brightness.
     BRIGHTNESS_ENABLED=false
@@ -1531,19 +1546,24 @@ elif [[ "$MASK_ENABLED" == false ]]; then
   requested_brightness=0
   ROLLBACK_BRIGHTNESS=0
 elif [[ "$MASK_STEP" == true || "$SHADER_ONLY" == true ]]; then
-  current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
-  requested_brightness="$current_brightness"
-  ROLLBACK_BRIGHTNESS="$current_brightness"
+  if [[ "$BRIGHTNESS_ENABLED" == true ]]; then
+    current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
+    requested_brightness="$current_brightness"
+    ROLLBACK_BRIGHTNESS="$current_brightness"
+  else
+    requested_brightness=0
+    ROLLBACK_BRIGHTNESS=0
+  fi
 else
   if [[ "$BRIGHTNESS_ENABLED" == true ]]; then
     adjusted_base="$BRIGHTNESS_ORIGINAL"
     offset=$(( (BRIGHTNESS_MAX * COMPENSATION_PERCENT + 50) / 100 ))
     requested_brightness=$(clamp_brightness "$(( adjusted_base + offset ))" "$BRIGHTNESS_MAX")
+    ROLLBACK_BRIGHTNESS="$current_brightness"
   else
-    requested_brightness="$current_brightness"
+    requested_brightness=0
+    ROLLBACK_BRIGHTNESS=0
   fi
-
-  ROLLBACK_BRIGHTNESS="$current_brightness"
 fi
 
 if [[ "$PIXEL_SHIFT" == true ]]; then
@@ -1632,7 +1652,11 @@ elif [[ "$SHADER_ONLY" == true ]]; then
   printf 'hyproled: pixel shift %s; brightness unchanged (%s)\n' \
     "$pixel_shift_status" "$ROLLBACK_BRIGHTNESS"
 elif [[ "$MASK_STEP" == true ]]; then
-  printf 'hyproled: mask advanced to phase %s; brightness unchanged (%s)\n' "$PHASE" "$(get_brightness)"
+  if [[ "$BRIGHTNESS_ENABLED" == true ]]; then
+    printf 'hyproled: mask advanced to phase %s; brightness unchanged (%s)\n' "$PHASE" "$(get_brightness)"
+  else
+    printf 'hyproled: mask advanced to phase %s; brightness unchanged (compensation disabled)\n' "$PHASE"
+  fi
 elif [[ "$MASK_ENABLED" == false ]]; then
   printf 'hyproled: Pixel Shift enabled; mask disabled; brightness unchanged\n'
 elif [[ "$BRIGHTNESS_ENABLED" == true ]]; then
