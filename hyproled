@@ -241,7 +241,7 @@ emit_status() {
   # Do not expose malformed or partially written state to Waybar.
   if [[ ! -f "$STATE_FILE" || ! -r "$STATE_FILE" ]] || ! jq -e '
     type == "object" and
-    (.version == 1 or .version == 2 or .version == 3 or .version == 4 or .version == 5) and
+    .version == 5 and
     (.status == "active" or .status == "applying" or .status == "restoring") and
     (.phase | type == "number" and floor == . and . >= 0 and . <= 3) and
     (.offPixels | type == "number" and floor == . and . >= 1 and . <= 3) and
@@ -259,27 +259,19 @@ emit_status() {
     (if .status == "restoring" then
       (.restoreTarget | type == "number" and . >= 0)
     else true end) and
-    (if .version == 1 then true else
-      (.brightnessEnabled | type == "boolean") and
-      (.brightnessCompensationEnabled == null or (.brightnessCompensationEnabled | type == "boolean")) and
-      (.compensationPercentOfMaxByPixelCount | type == "object") and
-      (if .version >= 3 then
-        (.pixelShift | type == "boolean") and
-        (if .version >= 4 then
-          (.maskEnabled | type == "boolean")
-        else true end)
-      else true end)
-    end) and
-    (if .version >= 5 then
-      (.pixelShiftMode | type == "string" and
-        (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
-      (.pixelShiftIndex | type == "number" and floor == . and . >= 0) and
-      (if .pixelShiftMode == "fixed" then .pixelShiftIndex == 0
-       elif .pixelShiftMode == "linear-horizontal" or .pixelShiftMode == "linear-vertical" then .pixelShiftIndex <= 1
-       elif .pixelShiftMode == "orbit-2x2" then .pixelShiftIndex <= 3
-       elif .pixelShiftMode == "orbit-3x3" then .pixelShiftIndex <= 8
-       else false end)
-    else true end)
+    (.brightnessEnabled | type == "boolean") and
+    (.brightnessCompensationEnabled | type == "boolean") and
+    (.compensationPercentOfMaxByPixelCount | type == "object") and
+    (.pixelShift | type == "boolean") and
+    (.maskEnabled | type == "boolean") and
+    (.pixelShiftMode | type == "string" and
+      (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
+    (.pixelShiftIndex | type == "number" and floor == . and . >= 0) and
+    (if .pixelShiftMode == "fixed" then .pixelShiftIndex == 0
+     elif .pixelShiftMode == "linear-horizontal" or .pixelShiftMode == "linear-vertical" then .pixelShiftIndex <= 1
+     elif .pixelShiftMode == "orbit-2x2" then .pixelShiftIndex <= 3
+     elif .pixelShiftMode == "orbit-3x3" then .pixelShiftIndex <= 8
+     else false end)
   ' "$STATE_FILE" >/dev/null 2>&1; then
     jq -cn --arg tooltip "$invalid_tooltip" '{
       text: "◌",
@@ -294,9 +286,9 @@ emit_status() {
   # Disabled Pixel Shift always maps to the neutral center state, regardless
   # of the mode retained in persistent preferences.
   shift_state=$(jq -r '
-    if (.pixelShift // false) then
-      (if .version >= 5 then .pixelShiftMode else "fixed" end) as $mode
-      | (if .version >= 5 then (.pixelShiftIndex | floor) else 0 end) as $index
+    if .pixelShift then
+      .pixelShiftMode as $mode
+      | .pixelShiftIndex as $index
       | "\($mode)\t\($index)"
     else
       "orbit-2x2\t0"
@@ -313,13 +305,11 @@ emit_status() {
 
   jq --arg shift_direction "$shift_direction" -c '
     . as $s
-    | (if $s.version >= 2 then $s.brightnessEnabled else true end) as $brightness_enabled
-    | (if $s.version >= 4 then $s.maskEnabled else true end) as $mask_enabled
-    | (if $s.version >= 5 then $s.pixelShiftMode
-       elif ($s.pixelShift // false) then "fixed"
-       else "orbit-2x2" end) as $shift_mode
-    | (if $s.version >= 5 then ($s.pixelShiftIndex | floor) else 0 end) as $shift_index
-    | (if $s.brightnessCompensationEnabled != null then $s.brightnessCompensationEnabled else $brightness_enabled end) as $brightness_preference
+    | $s.brightnessEnabled as $brightness_enabled
+    | $s.maskEnabled as $mask_enabled
+    | $s.pixelShiftMode as $shift_mode
+    | $s.pixelShiftIndex as $shift_index
+    | $s.brightnessCompensationEnabled as $brightness_preference
     | (if $shift_mode == "fixed" then 1
        elif $shift_mode == "linear-horizontal" or $shift_mode == "linear-vertical" then 2
        elif $shift_mode == "orbit-2x2" then 4 else 9 end) as $shift_count
@@ -351,7 +341,7 @@ emit_status() {
           "\nArea: " + ($s.area // "full screen") +
           "\nInvert: " + (if $s.invert then "yes" else "no" end) +
           "\nPixel shift: " +
-            (if ($s.pixelShift // false) then "enabled" else "disabled" end) +
+            (if $s.pixelShift then "enabled" else "disabled" end) +
           "\nPixel Shift mode: " + $shift_mode +
           "\nPixel Shift position: " + (($shift_index + 1) | tostring) + "/" + ($shift_count | tostring) +
           "\nPixel Shift direction: " + $shift_direction +
@@ -385,7 +375,7 @@ emit_status() {
             end) +
             [
               ("pixel-shift-" +
-                (if ($s.pixelShift // false) then "enabled" else "disabled" end)),
+                (if $s.pixelShift then "enabled" else "disabled" end)),
               ("pixel-shift-mode-" + $shift_mode),
               ("pixel-shift-position-" + ($shift_index | tostring)),
               ("pixel-shift-direction-" + $shift_direction)
@@ -668,11 +658,10 @@ RESTORE_TARGET=""
 TEMP_STATE_FILE=""
 
 load_state() {
-  local state_compensation_preference
   [[ -s "$STATE_FILE" ]] || die "state file is missing or empty: $STATE_FILE"
   jq -e '
     type == "object" and
-    (.version == 1 or .version == 2 or .version == 3 or .version == 4 or .version == 5) and
+    .version == 5 and
     (.status == "active" or .status == "applying" or .status == "restoring") and
     (.phase | type == "number" and . >= 0 and . <= 3) and
     (.offPixels | type == "number" and . >= 1 and . <= 3) and
@@ -685,27 +674,19 @@ load_state() {
     (.brightnessDevice | type == "string" and length > 0) and
     (.activeShader | type == "string" and length > 0) and
     (.previousShader | type == "string") and
-    (if .version == 1 then true else
-      (.brightnessEnabled | type == "boolean") and
-      (.brightnessCompensationEnabled == null or (.brightnessCompensationEnabled | type == "boolean")) and
-      (.compensationPercentOfMaxByPixelCount | type == "object") and
-      (if .version >= 3 then
-        (.pixelShift | type == "boolean") and
-        (if .version >= 4 then
-          (.maskEnabled | type == "boolean")
-        else true end)
-      else true end)
-    end) and
-    (if .version >= 5 then
-      (.pixelShiftMode | type == "string" and
-        (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
-      (.pixelShiftIndex | type == "number" and floor == . and . >= 0) and
-      (if .pixelShiftMode == "fixed" then .pixelShiftIndex == 0
-       elif .pixelShiftMode == "linear-horizontal" or .pixelShiftMode == "linear-vertical" then .pixelShiftIndex <= 1
-       elif .pixelShiftMode == "orbit-2x2" then .pixelShiftIndex <= 3
-       elif .pixelShiftMode == "orbit-3x3" then .pixelShiftIndex <= 8
-       else false end)
-    else true end)
+    (.brightnessEnabled | type == "boolean") and
+    (.brightnessCompensationEnabled | type == "boolean") and
+    (.compensationPercentOfMaxByPixelCount | type == "object") and
+    (.pixelShift | type == "boolean") and
+    (.maskEnabled | type == "boolean") and
+    (.pixelShiftMode | type == "string" and
+      (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
+    (.pixelShiftIndex | type == "number" and floor == . and . >= 0) and
+    (if .pixelShiftMode == "fixed" then .pixelShiftIndex == 0
+     elif .pixelShiftMode == "linear-horizontal" or .pixelShiftMode == "linear-vertical" then .pixelShiftIndex <= 1
+     elif .pixelShiftMode == "orbit-2x2" then .pixelShiftIndex <= 3
+     elif .pixelShiftMode == "orbit-3x3" then .pixelShiftIndex <= 8
+     else false end)
   ' "$STATE_FILE" >/dev/null || die "state file is invalid or unsupported; refusing to change brightness or shader"
 
   STATUS=$(jq -r '.status' "$STATE_FILE")
@@ -714,23 +695,17 @@ load_state() {
   MONITOR=$(jq -r '.monitor' "$STATE_FILE")
   AREA=$(jq -r '.area // ""' "$STATE_FILE")
   INVERT=$(jq -r '.invert' "$STATE_FILE")
-  MASK_ENABLED=$(jq -r 'if .version >= 4 then .maskEnabled else true end' "$STATE_FILE")
-  PIXEL_SHIFT=$(jq -r '.pixelShift // false' "$STATE_FILE")
-  PIXEL_SHIFT_MODE=$(jq -r '
-    if .version >= 5 then .pixelShiftMode
-    elif (.pixelShift // false) then "fixed"
-    else "orbit-2x2"
-    end
-  ' "$STATE_FILE")
-  PIXEL_SHIFT_INDEX=$(jq -r 'if .version >= 5 then .pixelShiftIndex else 0 end' "$STATE_FILE")
+  MASK_ENABLED=$(jq -r '.maskEnabled' "$STATE_FILE")
+  PIXEL_SHIFT=$(jq -r '.pixelShift' "$STATE_FILE")
+  PIXEL_SHIFT_MODE=$(jq -r '.pixelShiftMode' "$STATE_FILE")
+  PIXEL_SHIFT_INDEX=$(jq -r '.pixelShiftIndex' "$STATE_FILE")
   BRIGHTNESS_DEVICE=$(jq -r '.brightnessDevice' "$STATE_FILE")
   BRIGHTNESS_ORIGINAL=$(jq -r '.brightnessOriginal' "$STATE_FILE")
   BRIGHTNESS_MAX=$(jq -r '.brightnessMax' "$STATE_FILE")
   BRIGHTNESS_APPLIED=$(jq -r '.brightnessApplied' "$STATE_FILE")
   COMPENSATION_PERCENT=$(jq -r '.compensationPercent' "$STATE_FILE")
-  BRIGHTNESS_ENABLED=$(jq -r 'if .version >= 2 then .brightnessEnabled else true end' "$STATE_FILE")
-  state_compensation_preference=$(jq -r 'if .brightnessCompensationEnabled == null then "" else .brightnessCompensationEnabled end' "$STATE_FILE")
-  if [[ -n "$state_compensation_preference" ]]; then BRIGHTNESS_COMPENSATION_ENABLED="$state_compensation_preference"; fi
+  BRIGHTNESS_ENABLED=$(jq -r '.brightnessEnabled' "$STATE_FILE")
+  BRIGHTNESS_COMPENSATION_ENABLED=$(jq -r '.brightnessCompensationEnabled' "$STATE_FILE")
   # The compensation table is declarative; always use the current Nix config.
   # Recovery must remain possible when the current Nix config is unavailable.
   if [[ -n "$CONFIG_COMPENSATION_MAP" ]]; then
@@ -1188,7 +1163,7 @@ trap 'exit 143' TERM
 is_pixel_shift_only_session() {
   jq -e '
     type == "object" and
-    (.version == 4 or .version == 5) and
+    .version == 5 and
     .status == "active" and
     .maskEnabled == false and
     .pixelShift == true
@@ -1207,10 +1182,10 @@ fi
 is_mask_only_session() {
   jq -e '
     type == "object" and
-    (.version == 1 or .version == 2 or .version == 3 or .version == 4 or .version == 5) and
+    .version == 5 and
     .status == "active" and
-    (if .version >= 3 then .pixelShift == false else true end) and
-    (if .version >= 4 then .maskEnabled == true else true end)
+    .pixelShift == false and
+    .maskEnabled == true
   ' "$STATE_FILE" >/dev/null 2>&1
 }
 

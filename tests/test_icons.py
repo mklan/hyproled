@@ -223,12 +223,15 @@ class StatusMaskTests(unittest.TestCase):
             env = os.environ.copy()
             env["XDG_RUNTIME_DIR"] = runtime_dir
             state = {
-                "version": 2, "status": "active", "phase": 0,
+                "version": 5, "status": "active", "phase": 0,
                 "offPixels": 1, "monitor": 0, "area": None, "invert": False,
                 "brightnessOriginal": 100, "brightnessMax": 528,
                 "brightnessApplied": 110, "brightnessDevice": "intel_backlight",
                 "activeShader": "/tmp/hyproled-test.glsl", "previousShader": "",
                 "compensationPercent": 10, "brightnessEnabled": True,
+                "brightnessCompensationEnabled": True,
+                "pixelShift": False, "maskEnabled": True,
+                "pixelShiftMode": "orbit-2x2", "pixelShiftIndex": 0,
                 "compensationPercentOfMaxByPixelCount": {"1": 10, "2": 20, "3": 30},
             }
             for phase in range(4):

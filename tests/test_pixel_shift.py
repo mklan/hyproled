@@ -594,23 +594,15 @@ class RuntimeStatusTests(unittest.TestCase):
             "previousShader": "",
             "compensationPercent": 0,
             "brightnessEnabled": False,
+            "brightnessCompensationEnabled": False,
+            "pixelShift": pixel_shift,
+            "maskEnabled": mask_enabled,
+            "pixelShiftMode": pixel_shift_mode,
+            "pixelShiftIndex": pixel_shift_index,
             "compensationPercentOfMaxByPixelCount": {
                 "1": 10, "2": 20, "3": 30
             },
         }
-
-        if version >= 3:
-            state["pixelShift"] = pixel_shift
-
-        if version >= 4:
-            state["maskEnabled"] = mask_enabled
-
-        if version >= 5:
-            state["pixelShiftMode"] = pixel_shift_mode
-            state["pixelShiftIndex"] = pixel_shift_index
-
-        if version == 1:
-            state.pop("brightnessEnabled")
 
         return state
 
@@ -641,19 +633,9 @@ class RuntimeStatusTests(unittest.TestCase):
         self.assertIn("Brightness compensation: disabled", payload["tooltip"])
         self.assertIn("Brightness: unchanged", payload["tooltip"])
 
-    def test_v1_migration_defaults_to_brightness_enabled(self):
+    def test_v5_pixel_shift_only(self):
         with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(1)
-            payload = self.run_status(state, directory)
-
-        self.assertIn("mask-1000", payload["class"])
-        self.assertIn("brightness-enabled", payload["class"])
-        self.assertNotIn("brightness-disabled", payload["class"])
-        self.assertIn("Brightness compensation: enabled", payload["tooltip"])
-
-    def test_v4_pixel_shift_only(self):
-        with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(4, False, True)
+            state = self.create_state(5, False, True)
             payload = self.run_status(state, directory)
 
         self.assertIn("pixel-shift-enabled", payload["class"])
@@ -667,18 +649,18 @@ class RuntimeStatusTests(unittest.TestCase):
         self.assertIn("Pixel shift: enabled", payload["tooltip"])
         self.assert_brightness_disabled(payload)
 
-    def test_v4_mask_only(self):
+    def test_v5_mask_only(self):
         with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(4, True, False)
+            state = self.create_state(5, True, False)
             payload = self.run_status(state, directory)
 
         self.assertIn("mask-1000", payload["class"])
         self.assertIn("pixel-shift-disabled", payload["class"])
         self.assert_brightness_disabled(payload)
 
-    def test_v4_combined(self):
+    def test_v5_combined(self):
         with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(4, True, True)
+            state = self.create_state(5, True, True)
             payload = self.run_status(state, directory)
 
         self.assertIn("mask-1000", payload["class"])
@@ -704,14 +686,6 @@ class RuntimeStatusTests(unittest.TestCase):
         self.assertEqual(payload["alt"], "error")
         self.assertIn("error", payload["class"])
 
-    def test_v3_migration_defaults_to_mask_enabled(self):
-        with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(3, True, True)
-            payload = self.run_status(state, directory)
-
-        self.assertIn("mask-1000", payload["class"])
-        self.assertIn("pixel-shift-enabled", payload["class"])
-
     def test_v5_integral_float_position_is_normalized(self):
         with tempfile.TemporaryDirectory() as directory:
             state = self.create_state(5, True, True, "orbit-3x3", 8)
@@ -732,13 +706,15 @@ class RuntimeStatusTests(unittest.TestCase):
         self.assertIn("Pixel Shift direction: center", payload["tooltip"])
         self.assertIn("Pixel shift: disabled", payload["tooltip"])
 
-    def test_v2_migration_defaults_to_mask_only(self):
-        with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(2)
-            payload = self.run_status(state, directory)
+    def test_legacy_runtime_state_versions_are_rejected(self):
+        for version in range(1, 5):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                state = self.create_state(5)
+                state["version"] = version
+                payload = self.run_status(state, directory)
 
-        self.assertIn("mask-1000", payload["class"])
-        self.assertIn("pixel-shift-disabled", payload["class"])
+            self.assertEqual(payload["alt"], "error")
+            self.assertIn("error", payload["class"])
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
@@ -769,7 +745,7 @@ class RuntimeStateLoadingTests(unittest.TestCase):
             raise AssertionError("save_state() was not found")
         cls.save_state_function = match.group(0)
 
-    def run_load_state(self, state):
+    def run_load_state(self, state, *, expected_returncode=0):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
             state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -791,7 +767,7 @@ class RuntimeStateLoadingTests(unittest.TestCase):
                 capture_output=True,
             )
 
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
         return result.stdout.splitlines()
 
     def run_pixel_shift_only_predicate(self, state):
@@ -814,21 +790,34 @@ class RuntimeStateLoadingTests(unittest.TestCase):
 
         return result.returncode == 0
 
-    def test_v4_preserves_explicit_false_values(self):
-        state = RuntimeStatusTests().create_state(4, False, True)
+    def test_v5_preserves_explicit_false_values(self):
+        state = RuntimeStatusTests().create_state(5, False, True)
 
         self.assertEqual(
             self.run_load_state(state),
             ["false", "true", "false", "fixed", "0"],
         )
 
-    def test_v4_without_pixel_shift_uses_orbit_default(self):
-        state = RuntimeStatusTests().create_state(4, False, False)
+    def test_v5_preserves_selected_mode_when_pixel_shift_is_disabled(self):
+        state = RuntimeStatusTests().create_state(
+            5, False, False, "orbit-3x3", 7
+        )
 
         self.assertEqual(
             self.run_load_state(state),
-            ["false", "false", "false", "orbit-2x2", "0"],
+            ["false", "false", "false", "orbit-3x3", "7"],
         )
+
+    def test_legacy_runtime_state_versions_are_rejected(self):
+        for version in range(1, 5):
+            with self.subTest(version=version):
+                state = RuntimeStatusTests().create_state(5)
+                state["version"] = version
+
+                self.assertEqual(
+                    self.run_load_state(state, expected_returncode=1),
+                    [],
+                )
 
     def test_v5_loads_selected_mode_and_position(self):
         state = RuntimeStatusTests().create_state(
@@ -837,22 +826,6 @@ class RuntimeStateLoadingTests(unittest.TestCase):
         self.assertEqual(
             self.run_load_state(state),
             ["false", "true", "false", "orbit-3x3", "7"],
-        )
-
-    def test_v3_defaults_to_mask_enabled(self):
-        state = RuntimeStatusTests().create_state(3, True, True)
-
-        self.assertEqual(
-            self.run_load_state(state),
-            ["true", "true", "false", "fixed", "0"],
-        )
-
-    def test_v1_uses_legacy_defaults(self):
-        state = RuntimeStatusTests().create_state(1)
-
-        self.assertEqual(
-            self.run_load_state(state),
-            ["true", "false", "true", "orbit-2x2", "0"],
         )
 
     def test_save_state_persists_v5_mode_and_index(self):
@@ -884,18 +857,14 @@ class RuntimeStateLoadingTests(unittest.TestCase):
         self.assertEqual(state["pixelShiftIndex"], 6)
 
     def test_pixel_shift_only_predicate(self):
-        state = RuntimeStatusTests().create_state(4, False, True)
+        state = RuntimeStatusTests().create_state(5, False, True)
         self.assertTrue(self.run_pixel_shift_only_predicate(state))
 
         state["maskEnabled"] = True
         self.assertFalse(self.run_pixel_shift_only_predicate(state))
 
-        state_v5 = RuntimeStatusTests().create_state(
-            5, False, True, "linear-vertical", 1
-        )
-        self.assertTrue(self.run_pixel_shift_only_predicate(state_v5))
-
-        legacy_state = RuntimeStatusTests().create_state(3, True, True)
+        legacy_state = RuntimeStatusTests().create_state(5, False, True)
+        legacy_state["version"] = 4
         self.assertFalse(self.run_pixel_shift_only_predicate(legacy_state))
 
 if __name__ == "__main__":
