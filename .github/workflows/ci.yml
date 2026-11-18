@@ -129,8 +129,10 @@ jobs:
             "zizmor==1.32.0"
 
       - name: Audit workflow definitions
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           "$RUNNER_TEMP/zizmor/bin/zizmor" \
-            --offline \
+            --strict-collection \
             --format=github \
             .github/workflows
