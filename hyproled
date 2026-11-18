@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION="0.4.0-dev"
+VERSION="0.4.0"
  RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 STATE_DIR="$RUNTIME_DIR/hyproled"
 STATE_FILE="$STATE_DIR/state.json"
