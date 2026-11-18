@@ -1159,7 +1159,10 @@ on_exit() {
   if [[ "$OP_COMMITTED" != true && "$KEEP_NEW_SHADER" != true && -n "$NEW_SHADER" && -f "$NEW_SHADER" ]]; then
     rm -f -- "$NEW_SHADER"
   fi
-  if [[ -n "$STATE_BACKUP" && -f "$STATE_BACKUP" ]]; then
+  # Keep the backup when rollback failed; it is an additional recovery point.
+  if [[ "$KEEP_NEW_SHADER" != true &&
+        -n "$STATE_BACKUP" &&
+        -f "$STATE_BACKUP" ]]; then
     rm -f -- "$STATE_BACKUP"
   fi
   exit "$exit_code"
