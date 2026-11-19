@@ -288,7 +288,7 @@ emit_status() {
   shift_state=$(jq -r '
     if .pixelShift then
       .pixelShiftMode as $mode
-      | .pixelShiftIndex as $index
+      | (.pixelShiftIndex | floor) as $index
       | "\($mode)\t\($index)"
     else
       "orbit-2x2\t0"
@@ -308,7 +308,7 @@ emit_status() {
     | $s.brightnessEnabled as $brightness_enabled
     | $s.maskEnabled as $mask_enabled
     | $s.pixelShiftMode as $shift_mode
-    | $s.pixelShiftIndex as $shift_index
+    | ($s.pixelShiftIndex | floor) as $shift_index
     | $s.brightnessCompensationEnabled as $brightness_preference
     | (if $shift_mode == "fixed" then 1
        elif $shift_mode == "linear-horizontal" or $shift_mode == "linear-vertical" then 2

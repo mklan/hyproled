@@ -635,7 +635,9 @@ class RuntimeStatusTests(unittest.TestCase):
 
     def test_v5_pixel_shift_only(self):
         with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(5, False, True)
+            state = self.create_state(
+                5, False, True, pixel_shift_index=1
+            )
             payload = self.run_status(state, directory)
 
         self.assertIn("pixel-shift-enabled", payload["class"])
@@ -660,7 +662,9 @@ class RuntimeStatusTests(unittest.TestCase):
 
     def test_v5_combined(self):
         with tempfile.TemporaryDirectory() as directory:
-            state = self.create_state(5, True, True)
+            state = self.create_state(
+                5, True, True, pixel_shift_index=1
+            )
             payload = self.run_status(state, directory)
 
         self.assertIn("mask-1000", payload["class"])
@@ -791,11 +795,13 @@ class RuntimeStateLoadingTests(unittest.TestCase):
         return result.returncode == 0
 
     def test_v5_preserves_explicit_false_values(self):
-        state = RuntimeStatusTests().create_state(5, False, True)
+        state = RuntimeStatusTests().create_state(
+            5, False, True, "orbit-2x2", 0
+        )
 
         self.assertEqual(
             self.run_load_state(state),
-            ["false", "true", "false", "fixed", "0"],
+            ["false", "true", "false", "orbit-2x2", "0"],
         )
 
     def test_v5_preserves_selected_mode_when_pixel_shift_is_disabled(self):
