@@ -834,6 +834,15 @@ class RuntimeStateLoadingTests(unittest.TestCase):
             ["false", "true", "false", "orbit-3x3", "7"],
         )
 
+    def test_v5_rejects_fractional_phase(self):
+        state = RuntimeStatusTests().create_state(5)
+        state["phase"] = 1.5
+
+        self.assertEqual(
+            self.run_load_state(state, expected_returncode=1),
+            [],
+        )
+
     def test_save_state_persists_v5_mode_and_index(self):
         with tempfile.TemporaryDirectory() as directory:
             script = (

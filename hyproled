@@ -663,7 +663,7 @@ load_state() {
     type == "object" and
     .version == 5 and
     (.status == "active" or .status == "applying" or .status == "restoring") and
-    (.phase | type == "number" and . >= 0 and . <= 3) and
+    (.phase | type == "number" and floor == . and . >= 0 and . <= 3) and
     (.offPixels | type == "number" and . >= 1 and . <= 3) and
     (.monitor | type == "number" and . >= 0) and
     (.brightnessOriginal | type == "number" and . >= 0) and
