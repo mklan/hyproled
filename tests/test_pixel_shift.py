@@ -764,9 +764,8 @@ class RuntimeStatusTests(unittest.TestCase):
                 state = self.create_state(5)
                 state["version"] = version
                 payload = self.run_status(state, directory)
-
-            self.assertEqual(payload["alt"], "error")
-            self.assertIn("error", payload["class"])
+                self.assertEqual(payload["alt"], "error")
+                self.assertIn("error", payload["class"])
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq is not installed")

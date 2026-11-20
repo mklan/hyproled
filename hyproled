@@ -742,6 +742,7 @@ while (($#)); do
 
     --*)
       die "unknown option: $1"
+      ;;
 
     *)
       LONG_ARGS+=("$1")
