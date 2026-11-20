@@ -144,6 +144,11 @@ class RuntimeOffRecoveryTests(unittest.TestCase):
             preferences_dir.mkdir(parents=True)
             mock_bin.mkdir()
 
+            bash_path = shutil.which("bash")
+            if bash_path is None:
+                self.skipTest("bash is required for recovery mocks")
+            (mock_bin / "bash").symlink_to(bash_path)
+
             active_shader = state_dir / "shader.test.glsl"
             active_shader.write_text("test shader", encoding="utf-8")
 
@@ -202,8 +207,8 @@ class RuntimeOffRecoveryTests(unittest.TestCase):
 
             hyprctl = mock_bin / "hyprctl"
             hyprctl.write_text(
-                """#!/usr/bin/env bash
-set -eu
+                f"#!{mock_bin / 'bash'}\n"
+                + """set -eu
 
 case "${1:-}" in
   version)
@@ -233,8 +238,8 @@ esac
 
             brightnessctl = mock_bin / "brightnessctl"
             brightnessctl.write_text(
-                """#!/usr/bin/env bash
-set -eu
+                f"#!{mock_bin / 'bash'}\n"
+                + """set -eu
 
 [[ "${1:-}" == "-d" ]] || exit 1
 shift 2

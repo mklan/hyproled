@@ -67,8 +67,8 @@ class LazyBrightnessDependencyTests(unittest.TestCase):
 
         hyprctl = mock_bin / "hyprctl"
         hyprctl.write_text(
-            """#!/usr/bin/env bash
-set -eu
+            f"#!{mock_bin / 'bash'}\n"
+            + """set -eu
 
 case "${1:-}" in
   version)
