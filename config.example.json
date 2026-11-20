@@ -1,0 +1,24 @@
+{
+  "$schema": "./config.schema.json",
+  "version": 1,
+  "defaults": {
+    "disabledPixels": 1,
+    "monitor": 0,
+    "area": null,
+    "invert": false,
+    "maskEnabled": true,
+    "pixelShift": true,
+    "pixelShiftMode": "orbit-2x2",
+    "pixelShiftIndex": 0,
+    "phase": 0
+  },
+  "brightness": {
+    "enabled": false,
+    "device": "intel_backlight",
+    "compensationPercentOfMaxByPixelCount": {
+      "1": 10,
+      "2": 20,
+      "3": 30
+    }
+  }
+}

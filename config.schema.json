@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hyproled configuration",
+  "description": "Configuration file consumed by hyproled. Unknown properties are permitted for forward compatibility.",
+  "type": "object",
+  "required": [
+    "version",
+    "defaults",
+    "brightness"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional editor hint pointing to this schema."
+    },
+    "version": {
+      "const": 1,
+      "description": "Configuration format version."
+    },
+    "defaults": {
+      "type": "object",
+      "required": [
+        "disabledPixels",
+        "monitor",
+        "invert"
+      ],
+      "properties": {
+        "disabledPixels": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "default": 1,
+          "description": "Number of disabled pixels in each 2x2 block."
+        },
+        "monitor": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Hyprland monitor ID."
+        },
+        "area": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]+:[0-9]+:[0-9]+:[0-9]+$"
+            }
+          ],
+          "default": null,
+          "description": "Optional x:y:w:h effect area; null means full screen."
+        },
+        "invert": {
+          "type": "boolean",
+          "default": false
+        },
+        "maskEnabled": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": false
+        },
+        "pixelShift": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": false
+        },
+        "pixelShiftMode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "fixed",
+            "linear-horizontal",
+            "linear-vertical",
+            "orbit-2x2",
+            "orbit-3x3",
+            null
+          ],
+          "default": "orbit-2x2"
+        },
+        "pixelShiftIndex": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 8,
+          "default": 0
+        },
+        "phase": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 3,
+          "default": 0
+        }
+      }
+    },
+    "brightness": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "device",
+        "compensationPercentOfMaxByPixelCount"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable brightness compensation. When false, brightnessctl is not required."
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "default": "intel_backlight",
+          "description": "Device name accepted by brightnessctl."
+        },
+        "compensationPercentOfMaxByPixelCount": {
+          "type": "object",
+          "required": [
+            "1",
+            "2",
+            "3"
+          ],
+          "properties": {
+            "1": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "2": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "3": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            }
+          },
+          "description": "Compensation percentage by disabled-pixel count. The resulting brightness is clamped to the device maximum."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "defaults"
+        ],
+        "properties": {
+          "defaults": {
+            "required": [
+              "pixelShiftMode"
+            ],
+            "properties": {
+              "pixelShiftMode": {
+                "const": "fixed"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "defaults": {
+            "properties": {
+              "pixelShiftIndex": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "const": 0
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "defaults"
+        ],
+        "properties": {
+          "defaults": {
+            "required": [
+              "pixelShiftMode"
+            ],
+            "properties": {
+              "pixelShiftMode": {
+                "enum": [
+                  "linear-horizontal",
+                  "linear-vertical"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "defaults": {
+            "properties": {
+              "pixelShiftIndex": {
+                "maximum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "defaults"
+        ],
+        "properties": {
+          "defaults": {
+            "properties": {
+              "pixelShiftMode": {
+                "enum": [
+                  "orbit-2x2",
+                  null
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "defaults": {
+            "properties": {
+              "pixelShiftIndex": {
+                "maximum": 3
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

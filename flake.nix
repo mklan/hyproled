@@ -89,7 +89,7 @@
                     jq
                     util-linux
                     brightnessctl
-                    python3
+                    (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.jsonschema ]))
                     glslang
                     alejandra
                 ];
@@ -106,7 +106,7 @@
                     gawk
                     jq
                     util-linux
-                    python3
+                    (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.jsonschema ]))
                     glslang
                 ];
             } ''

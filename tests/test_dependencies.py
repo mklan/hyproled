@@ -15,7 +15,14 @@ HYPROLED = ROOT / "hyproled"
 
 @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
 class LazyBrightnessDependencyTests(unittest.TestCase):
-    def create_environment(self, root, mask_enabled, pixel_shift_enabled):
+    def create_environment(
+        self,
+        root,
+        mask_enabled,
+        pixel_shift_enabled,
+        pixel_shift_mode="orbit-2x2",
+        pixel_shift_index=0,
+    ):
         runtime_dir = root / "runtime"
         config_dir = root / "config" / "hyproled"
         state_home = root / "state"
@@ -35,19 +42,22 @@ class LazyBrightnessDependencyTests(unittest.TestCase):
                 self.skipTest(f"required test utility is missing: {name}")
             (mock_bin / name).symlink_to(executable)
 
+        defaults = {
+            "disabledPixels": 1,
+            "monitor": 0,
+            "area": None,
+            "invert": False,
+            "maskEnabled": mask_enabled,
+            "pixelShift": pixel_shift_enabled,
+            "pixelShiftIndex": pixel_shift_index,
+            "phase": 0,
+        }
+        if pixel_shift_mode is not None:
+            defaults["pixelShiftMode"] = pixel_shift_mode
+
         config = {
             "version": 1,
-            "defaults": {
-                "disabledPixels": 1,
-                "monitor": 0,
-                "area": None,
-                "invert": False,
-                "maskEnabled": mask_enabled,
-                "pixelShift": pixel_shift_enabled,
-                "pixelShiftMode": "orbit-2x2",
-                "pixelShiftIndex": 0,
-                "phase": 0,
-            },
+            "defaults": defaults,
             "brightness": {
                 "enabled": True,
                 "device": "test_backlight",
@@ -115,6 +125,88 @@ esac
             text=True,
             capture_output=True,
         )
+
+    def test_config_rejects_pixel_shift_index_outside_selected_mode(self):
+        cases = (
+            ("fixed", 1),
+            ("linear-horizontal", 2),
+            ("linear-vertical", 2),
+            ("orbit-2x2", 4),
+            # An omitted mode uses the effective default: orbit-2x2.
+            (None, 4),
+        )
+
+        for mode, index in cases:
+            with self.subTest(mode=mode, index=index):
+                with tempfile.TemporaryDirectory() as directory:
+                    env, state_file = self.create_environment(
+                        Path(directory),
+                        mask_enabled=False,
+                        pixel_shift_enabled=True,
+                        pixel_shift_mode=mode,
+                        pixel_shift_index=index,
+                    )
+
+                    result = self.run_hyproled(["--pixel-shift"], env)
+
+                    self.assertNotEqual(
+                        result.returncode, 0, result.stdout + result.stderr
+                    )
+                    self.assertIn("defaults.pixelShiftIndex", result.stderr)
+                    self.assertFalse(state_file.exists())
+
+                    preferences_file = (
+                        Path(env["XDG_STATE_HOME"])
+                        / "hyproled"
+                        / "preferences.json"
+                    )
+                    self.assertFalse(preferences_file.exists())
+
+    def test_preferences_reject_pixel_shift_index_outside_selected_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, state_file = self.create_environment(
+                Path(directory),
+                mask_enabled=False,
+                pixel_shift_enabled=True,
+            )
+
+            preferences_file = (
+                Path(env["XDG_STATE_HOME"])
+                / "hyproled"
+                / "preferences.json"
+            )
+            preferences_file.parent.mkdir(parents=True, exist_ok=True)
+
+            invalid_preferences = {
+                "version": 1,
+                "defaultsHash": "test-defaults-hash",
+                "maskEnabled": False,
+                "pixelShift": True,
+                "pixelShiftMode": "fixed",
+                "pixelShiftIndex": 1,
+                "phase": 0,
+                "offPixels": 1,
+                "monitor": 0,
+                "area": None,
+                "invert": False,
+                "brightnessCompensationEnabled": False,
+            }
+            original_preferences = json.dumps(invalid_preferences)
+            preferences_file.write_text(
+                original_preferences, encoding="utf-8"
+            )
+
+            result = self.run_hyproled(["--pixel-shift"], env)
+
+            self.assertNotEqual(
+                result.returncode, 0, result.stdout + result.stderr
+            )
+            self.assertIn("preferences file is invalid", result.stderr)
+            self.assertFalse(state_file.exists())
+            self.assertEqual(
+                preferences_file.read_text(encoding="utf-8"),
+                original_preferences,
+            )
 
     def test_pixel_shift_only_can_start_and_advance_without_brightnessctl(self):
         with tempfile.TemporaryDirectory() as directory:

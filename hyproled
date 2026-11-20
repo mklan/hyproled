@@ -62,6 +62,24 @@ pixel_shift_mode_count() {
   esac
 }
 
+# Validate the state index against the selected mode. Keep this invariant
+# shared by configuration and persistent preference validation.
+pixel_shift_index_valid() {
+  local mode="$1" index="$2" maximum
+
+  [[ "$index" =~ ^[0-9]+$ ]] || return 1
+
+  case "$mode" in
+    fixed) maximum=0 ;;
+    linear-horizontal|linear-vertical) maximum=1 ;;
+    orbit-2x2) maximum=3 ;;
+    orbit-3x3) maximum=8 ;;
+    *) return 1 ;;
+  esac
+
+  (( 10#$index <= maximum ))
+}
+
 pixel_shift_position() {
   local mode="$1" index="$2"
   case "$mode:$index" in
@@ -848,6 +866,9 @@ load_config() {
   CONFIG_DEFAULT_PIXEL_SHIFT=$(jq -r '.defaults.pixelShift // false' "$CONFIG_FILE")
   CONFIG_DEFAULT_PIXEL_SHIFT_MODE=$(jq -r '.defaults.pixelShiftMode // "orbit-2x2"' "$CONFIG_FILE")
   CONFIG_DEFAULT_PIXEL_SHIFT_INDEX=$(jq -r '.defaults.pixelShiftIndex // 0' "$CONFIG_FILE")
+  if ! pixel_shift_index_valid "$CONFIG_DEFAULT_PIXEL_SHIFT_MODE" "$CONFIG_DEFAULT_PIXEL_SHIFT_INDEX"; then
+    die "invalid configuration: defaults.pixelShiftIndex '$CONFIG_DEFAULT_PIXEL_SHIFT_INDEX' is invalid for mode '$CONFIG_DEFAULT_PIXEL_SHIFT_MODE'"
+  fi
   CONFIG_DEFAULT_PHASE=$(jq -r '.defaults.phase // 0' "$CONFIG_FILE")
   CONFIG_BRIGHTNESS_ENABLED=$(jq -r '.brightness.enabled' "$CONFIG_FILE")
   CONFIG_BRIGHTNESS_DEVICE=$(jq -r '.brightness.device' "$CONFIG_FILE")
@@ -913,7 +934,13 @@ validate_preferences() {
     (.area == null or (.area | type == "string")) and
     (.invert | type == "boolean") and
     (.brightnessCompensationEnabled | type == "boolean")
-  ' "$PREFERENCES_FILE" >/dev/null 2>&1
+  ' "$PREFERENCES_FILE" >/dev/null 2>&1 || return 1
+
+  local pixel_shift_mode pixel_shift_index
+  pixel_shift_mode=$(jq -r '.pixelShiftMode' "$PREFERENCES_FILE") || return 1
+  pixel_shift_index=$(jq -r '.pixelShiftIndex' "$PREFERENCES_FILE") || return 1
+
+  pixel_shift_index_valid "$pixel_shift_mode" "$pixel_shift_index"
 }
 
 load_preferences() {

@@ -32,7 +32,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes \
             jq \
-            glslang-tools
+            glslang-tools \
+            python3-jsonschema
 
       - name: Verify test tools
         run: |
@@ -40,6 +41,7 @@ jobs:
           command -v python3
           command -v jq
           command -v glslangValidator
+          python3 -c 'import jsonschema'
 
       - name: Check Bash syntax
         run: |
