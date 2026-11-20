@@ -326,13 +326,17 @@ def analyze_fixture(image: GrayImage) -> dict[str, object]:
 
 
 def _source_revision() -> str | None:
-    result = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+
     return result.stdout.strip() if result.returncode == 0 else None
 
 

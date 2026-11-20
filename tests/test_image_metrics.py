@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import image_metrics as metrics
 
@@ -214,6 +215,13 @@ class ExposureMetricTests(unittest.TestCase):
                     places=10,
                     msg=f"{mode}, OFF_PIXELS={off_pixels}",
                 )
+
+    def test_source_revision_is_optional_when_git_is_unavailable(self):
+        with patch(
+            "image_metrics.subprocess.run",
+            side_effect=FileNotFoundError,
+        ):
+            self.assertIsNone(metrics._source_revision())
 
     def test_all_fixture_scenarios_produce_finite_nonnegative_metrics(self):
         report = metrics.build_report()
