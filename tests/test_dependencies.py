@@ -208,6 +208,112 @@ esac
                 original_preferences,
             )
 
+    def test_check_config_does_not_require_hyprland_or_write_runtime_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, state_file = self.create_environment(
+                Path(directory),
+                mask_enabled=True,
+                pixel_shift_enabled=True,
+            )
+
+            hyprctl = Path(env["PATH"]) / "hyprctl"
+            hyprctl.unlink()
+
+            result = self.run_hyproled(["--check-config"], env)
+
+            self.assertEqual(
+                result.returncode, 0, result.stdout + result.stderr
+            )
+            self.assertIn("configuration is valid", result.stdout)
+            self.assertIn(env["XDG_CONFIG_HOME"], result.stdout)
+
+            preferences_file = (
+                Path(env["XDG_STATE_HOME"])
+                / "hyproled"
+                / "preferences.json"
+            )
+            runtime_state_dir = Path(env["XDG_RUNTIME_DIR"]) / "hyproled"
+
+            self.assertFalse(state_file.exists())
+            self.assertFalse(preferences_file.exists())
+            self.assertFalse(runtime_state_dir.exists())
+
+    def test_check_config_reports_cross_field_errors_without_side_effects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, state_file = self.create_environment(
+                Path(directory),
+                mask_enabled=False,
+                pixel_shift_enabled=True,
+                pixel_shift_mode="fixed",
+                pixel_shift_index=1,
+            )
+
+            hyprctl = Path(env["PATH"]) / "hyprctl"
+            hyprctl.unlink()
+
+            result = self.run_hyproled(["--check-config"], env)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("defaults.pixelShiftIndex", result.stderr)
+
+            preferences_file = (
+                Path(env["XDG_STATE_HOME"])
+                / "hyproled"
+                / "preferences.json"
+            )
+            runtime_state_dir = Path(env["XDG_RUNTIME_DIR"]) / "hyproled"
+
+            self.assertFalse(state_file.exists())
+            self.assertFalse(preferences_file.exists())
+            self.assertFalse(runtime_state_dir.exists())
+
+    def test_long_area_and_inversion_options_can_clear_saved_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, state_file = self.create_environment(
+                Path(directory),
+                mask_enabled=True,
+                pixel_shift_enabled=False,
+            )
+
+            start = self.run_hyproled(
+                [
+                    "--area=10:20:300:40",
+                    "--invert",
+                    "--no-brightness-compensation",
+                ],
+                env,
+            )
+            self.assertEqual(
+                start.returncode, 0, start.stdout + start.stderr
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(state["area"], "10:20:300:40")
+            self.assertTrue(state["invert"])
+
+            update = self.run_hyproled(
+                ["--full-screen", "--no-invert"],
+                env,
+            )
+            self.assertEqual(
+                update.returncode, 0, update.stdout + update.stderr
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertIsNone(state["area"])
+            self.assertFalse(state["invert"])
+
+            preferences_file = (
+                Path(env["XDG_STATE_HOME"])
+                / "hyproled"
+                / "preferences.json"
+            )
+            preferences = json.loads(
+                preferences_file.read_text(encoding="utf-8")
+            )
+            self.assertIsNone(preferences["area"])
+            self.assertFalse(preferences["invert"])
+
     def test_pixel_shift_only_can_start_and_advance_without_brightnessctl(self):
         with tempfile.TemporaryDirectory() as directory:
             env, state_file = self.create_environment(

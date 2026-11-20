@@ -167,21 +167,44 @@ class CompositeShaderTests(unittest.TestCase):
         self.assertIn("vec4 orig = texture(tex, v_texcoord);", shader)
         self.assertNotIn("texelFetch", shader)
 
-    def test_cli_help_documents_both_options(self):
-        result = subprocess.run(
-            ["bash", str(HYPROLED), "-h"],
+    def test_cli_help_version_aliases_and_action_conflicts(self):
+        for option in ("-h", "--help"):
+            result = subprocess.run(
+                ["bash", str(HYPROLED), option],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for documented in (
+                "--area",
+                "--full-screen",
+                "--invert",
+                "--no-invert",
+                "--off-pixels",
+                "--step",
+                "--monitor",
+                "--pixel-shift",
+                "--no-pixel-shift",
+                "--pixel-shift-mode",
+                "--mask-step",
+                "--shift-step",
+                "--check-config",
+                "--status",
+                "--version",
+            ):
+                self.assertIn(documented, result.stdout)
+
+        version = subprocess.run(
+            ["bash", str(HYPROLED), "--version", "--unknown-option"],
             cwd=ROOT,
             text=True,
             capture_output=True,
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--pixel-shift", result.stdout)
-        self.assertIn("--no-pixel-shift", result.stdout)
-        self.assertIn("--pixel-shift-mode", result.stdout)
-        self.assertIn("--mask-step", result.stdout)
-        self.assertIn("--shift-step", result.stdout)
+        self.assertEqual(version.returncode, 0, version.stderr)
+        self.assertIn(f"hyproled {self.version_from_source()}", version.stdout)
 
-        # The parser must preserve ordinary options after consuming a mode value.
+        # A consumed value must not hide a later short option.
         parser_regression = subprocess.run(
             ["bash", str(HYPROLED), "--pixel-shift-mode", "orbit-3x3", "-z"],
             cwd=ROOT, text=True, capture_output=True,
@@ -189,31 +212,56 @@ class CompositeShaderTests(unittest.TestCase):
         self.assertNotEqual(parser_regression.returncode, 0)
         self.assertIn("unknown option: -z", parser_regression.stderr)
 
-        invalid = subprocess.run(
-            ["bash", str(HYPROLED), "--pixel-shift-mode", "unknown"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-        )
-        self.assertNotEqual(invalid.returncode, 0)
-        self.assertIn("invalid Pixel Shift mode", invalid.stderr)
-
-        conflicting_steps = [
-            ["-s", "--shift-step"],
-            ["-s", "--mask-step"],
-            ["--mask-step", "--shift-step"],
-            ["--mask-step", "--pixel-shift"],
-            ["--status", "--mask-step"],
+        invalid_options = [
+            (["--pixel-shift-mode", "unknown"], "invalid Pixel Shift mode"),
+            (["--area=invalid"], "invalid area"),
+            (["--off-pixels=4"], "invalid pixel count"),
+            (["--monitor=invalid"], "invalid monitor ID"),
+            (["--unknown-option"], "unknown option: --unknown-option"),
         ]
-        for arguments in conflicting_steps:
+        for arguments, expected_error in invalid_options:
             with self.subTest(arguments=arguments):
-                conflict = subprocess.run(
+                result = subprocess.run(
                     ["bash", str(HYPROLED), *arguments],
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
                 )
-                self.assertNotEqual(conflict.returncode, 0)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr)
+
+        conflicting_options = [
+            ["-s", "--shift-step"],
+            ["-s", "--mask-step"],
+            ["--mask-step", "--shift-step"],
+            ["--mask-step", "--pixel-shift"],
+            ["--step", "--shift-step"],
+            ["--status", "--mask-step"],
+            ["--status", "--monitor=0"],
+            ["--status", "--invert"],
+            ["off", "--area=0:0:10:10"],
+            ["off", "--no-invert"],
+            ["--invert", "--no-invert"],
+            ["--no-invert", "-i"],
+            ["--check-config", "--no-invert"],
+            ["--check-config", "--area=0:0:10:10"],
+        ]
+        for arguments in conflicting_options:
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    ["bash", str(HYPROLED), *arguments],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+
+    @staticmethod
+    def version_from_source():
+        for line in SOURCE.splitlines():
+            if line.startswith('VERSION="'):
+                return line.split('"', 2)[1]
+        raise AssertionError("VERSION declaration not found")
 
     def test_all_pixel_shift_positions_compile(self):
         validator = shutil.which("glslangValidator")
