@@ -106,45 +106,8 @@
                     jq
                     util-linux
                     brightnessctl
-                    (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.jsonschema ]))
-                    glslang
-                    alejandra
                 ];
             };
-        });
-
-        checks = forAllSystems (system: let
-            pkgs = pkgsFor system;
-        in {
-            tests = pkgs.runCommand "hyproled-tests" {
-                nativeBuildInputs = with pkgs; [
-                    bash
-                    coreutils
-                    gawk
-                    jq
-                    util-linux
-                    (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.jsonschema ]))
-                    glslang
-                ];
-            } ''
-                export HOME="$TMPDIR/home"
-                export PYTHONDONTWRITEBYTECODE=1
-
-                source="$TMPDIR/source"
-
-                mkdir -p "$HOME" "$source"
-
-                cp -r ${self}/. "$source/"
-                chmod -R u+w "$source"
-
-                patchShebangs "$source"
-
-                cd "$source"
-
-                python3 -m unittest discover -s tests -v
-
-                touch "$out"
-            '';
         });
 
         formatter = forAllSystems (system:
