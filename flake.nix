@@ -59,6 +59,21 @@
                     install -Dm644 \
                         "$src/assets/waybar-icons.css" \
                         "$out/share/hyproled/waybar-icons.css"
+                    install -Dm644 \
+                        "$src/config.schema.json" \
+                        "$out/share/hyproled/config.schema.json"
+
+                    install -Dm644 \
+                        "$src/config.example.json" \
+                        "$out/share/hyproled/config.example.json"
+
+                    install -Dm644 \
+                        "$src/README.md" \
+                        "$out/share/doc/hyproled/README.md"
+
+                    install -Dm644 \
+                        "$src/LICENSE" \
+                        "$out/share/licenses/hyproled/LICENSE"
 
                     wrapProgram "$out/bin/hyproled" \
                         --prefix PATH : \
@@ -69,8 +84,10 @@
 
                 meta = {
                     description = "Hyprland shader utility for OLED burn-in mitigation";
+                    homepage = "https://github.com/Atiumtea/hyproled";
+                    license = pkgs.lib.licenses.bsd3;
                     mainProgram = "hyproled";
-                    platforms = pkgs.lib.platforms.linux;
+                    platforms = systems;
                 };
             };
         in {
