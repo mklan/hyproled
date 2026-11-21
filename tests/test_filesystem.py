@@ -60,7 +60,8 @@ class FilesystemFailureTests(unittest.TestCase):
 
         state_dir.mkdir(parents=True, exist_ok=True)
 
-        quote = shlex.quote
+        def quote(value):
+            return shlex.quote(os.fspath(value))
         variables = "\n".join((
             f"STATE_DIR={quote(state_dir)}",
             f"STATE_FILE={quote(state_dir / 'state.json')}",
@@ -258,6 +259,7 @@ class FilesystemFailureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             state_dir = root / "runtime" / "hyproled"
+            state_dir.mkdir(parents=True, exist_ok=True)
             state_file = state_dir / "state.json"
             state_file.write_text("previous-state", encoding="utf-8")
 
