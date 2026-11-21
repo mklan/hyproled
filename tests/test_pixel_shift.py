@@ -669,6 +669,7 @@ class RuntimeStatusTests(unittest.TestCase):
             "brightnessDevice": "intel_backlight",
             "activeShader": "/tmp/hyproled-test.glsl",
             "previousShader": "",
+            "restoreTarget": None,
             "compensationPercent": 0,
             "brightnessEnabled": False,
             "brightnessCompensationEnabled": False,
@@ -806,6 +807,56 @@ class RuntimeStatusTests(unittest.TestCase):
         self.assertIn("Pixel Shift direction: center", payload["tooltip"])
         self.assertIn("Pixel shift: disabled", payload["tooltip"])
 
+    def test_v5_rejects_malformed_runtime_fields(self):
+        invalid_cases = (
+            ("fractional offPixels", "offPixels", 1.5),
+            ("fractional monitor", "monitor", 0.5),
+            ("fractional brightness baseline", "brightnessOriginal", 100.5),
+            ("fractional brightness maximum", "brightnessMax", 528.5),
+            ("fractional applied brightness", "brightnessApplied", 100.5),
+            ("fractional compensation", "compensationPercent", 0.5),
+            ("malformed area", "area", "0:0:10:10;invalid"),
+            (
+                "malformed compensation map",
+                "compensationPercentOfMaxByPixelCount",
+                {"1": 10, "2": "20", "3": 30},
+            ),
+            ("unexpected restore target", "restoreTarget", 100),
+        )
+
+        for label, field, value in invalid_cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                state = self.create_state(5)
+                state[field] = value
+                payload = self.run_status(state, directory)
+                self.assertEqual(payload["alt"], "error")
+                self.assertIn("error", payload["class"])
+
+        missing_area = self.create_state(5)
+        missing_area.pop("area")
+        with tempfile.TemporaryDirectory() as directory:
+            payload = self.run_status(missing_area, directory)
+        self.assertEqual(payload["alt"], "error")
+
+        missing_restore_target = self.create_state(5)
+        missing_restore_target.pop("restoreTarget")
+        with tempfile.TemporaryDirectory() as directory:
+            payload = self.run_status(missing_restore_target, directory)
+        self.assertEqual(payload["alt"], "error")
+
+        restoring_without_target = self.create_state(5)
+        restoring_without_target["status"] = "restoring"
+        with tempfile.TemporaryDirectory() as directory:
+            payload = self.run_status(restoring_without_target, directory)
+        self.assertEqual(payload["alt"], "error")
+
+        restoring_with_fractional_target = self.create_state(5)
+        restoring_with_fractional_target["status"] = "restoring"
+        restoring_with_fractional_target["restoreTarget"] = 10.5
+        with tempfile.TemporaryDirectory() as directory:
+            payload = self.run_status(restoring_with_fractional_target, directory)
+        self.assertEqual(payload["alt"], "error")
+
     def test_legacy_runtime_state_versions_are_rejected(self):
         for version in range(1, 5):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
@@ -820,6 +871,14 @@ class RuntimeStatusTests(unittest.TestCase):
 class RuntimeStateLoadingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        match = re.search(
+            r"(?ms)^validate_state_file\(\) \{\n.*?^\}",
+            SOURCE,
+        )
+        if match is None:
+            raise AssertionError("validate_state_file() was not found")
+        cls.validate_state_function = match.group(0)
+
         match = re.search(
             r"(?ms)^load_state\(\) \{\n.*?^\}",
             SOURCE,
@@ -853,6 +912,8 @@ class RuntimeStateLoadingTests(unittest.TestCase):
                 'die() { printf "%s\\n" "$*" >&2; exit 1; }\n'
                 'STATE_FILE="$1"\n'
                 "COMPENSATION_MAP='{}'\n"
+                + self.validate_state_function
+                + "\n"
                 + self.load_state_function
                 + '\nload_state\nprintf "%s\\n" '
                   '"$MASK_ENABLED" "$PIXEL_SHIFT" "$BRIGHTNESS_ENABLED" '
@@ -936,6 +997,61 @@ class RuntimeStateLoadingTests(unittest.TestCase):
         self.assertEqual(
             self.run_load_state(state, expected_returncode=1),
             [],
+        )
+
+    def test_v5_load_state_rejects_malformed_fields(self):
+        invalid_cases = (
+            ("fractional offPixels", "offPixels", 1.5),
+            ("fractional monitor", "monitor", 0.5),
+            ("fractional brightness baseline", "brightnessOriginal", 100.5),
+            ("fractional brightness maximum", "brightnessMax", 528.5),
+            ("fractional applied brightness", "brightnessApplied", 100.5),
+            ("fractional compensation", "compensationPercent", 0.5),
+            ("malformed area", "area", "0:0:10:10;invalid"),
+        )
+
+        for label, field, value in invalid_cases:
+            with self.subTest(case=label):
+                state = RuntimeStatusTests().create_state(5)
+                state[field] = value
+                self.assertEqual(
+                    self.run_load_state(state, expected_returncode=1),
+                    [],
+                )
+
+        missing_area = RuntimeStatusTests().create_state(5)
+        missing_area.pop("area")
+        self.assertEqual(
+            self.run_load_state(missing_area, expected_returncode=1),
+            [],
+        )
+
+        restoring_without_target = RuntimeStatusTests().create_state(5)
+        restoring_without_target["status"] = "restoring"
+        self.assertEqual(
+            self.run_load_state(restoring_without_target, expected_returncode=1),
+            [],
+        )
+
+        restoring_with_fractional_target = RuntimeStatusTests().create_state(5)
+        restoring_with_fractional_target["status"] = "restoring"
+        restoring_with_fractional_target["restoreTarget"] = 10.5
+        self.assertEqual(
+            self.run_load_state(
+                restoring_with_fractional_target,
+                expected_returncode=1,
+            ),
+            [],
+        )
+
+    def test_v5_load_state_accepts_valid_restore_target(self):
+        state = RuntimeStatusTests().create_state(5)
+        state["status"] = "restoring"
+        state["restoreTarget"] = 110
+
+        self.assertEqual(
+            self.run_load_state(state),
+            ["true", "false", "false", "orbit-2x2", "0"],
         )
 
     def test_save_state_persists_v5_mode_and_index(self):

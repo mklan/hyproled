@@ -350,6 +350,56 @@ validate_config_file() {
   return 0
 }
 
+validate_state_file() {
+  local state_file="${1:-$STATE_FILE}"
+  [[ -f "$state_file" && -s "$state_file" && -r "$state_file" ]] || return 1
+
+  jq -e '
+    def is_integer: type == "number" and floor == .;
+    def valid_area:
+      . == null or
+      (type == "string" and test("^[0-9]+:[0-9]+:[0-9]+:[0-9]+$"));
+
+    type == "object" and
+    .version == 5 and
+    (.status == "active" or .status == "applying" or .status == "restoring") and
+    (.phase | is_integer and . >= 0 and . <= 3) and
+    (.offPixels | is_integer and . >= 1 and . <= 3) and
+    (.monitor | is_integer and . >= 0) and
+    (has("area") and (.area | valid_area)) and
+    (.invert | type == "boolean") and
+    (.brightnessOriginal | is_integer and . >= 0) and
+    (.brightnessMax | is_integer and . > 0) and
+    (.brightnessApplied | is_integer and . >= 0) and
+    (.brightnessDevice | type == "string" and length > 0) and
+    (.activeShader | type == "string" and length > 0) and
+    (.previousShader | type == "string") and
+    (.compensationPercent | is_integer and . >= 0 and . <= 1000) and
+    has("restoreTarget") and
+    (if .status == "restoring" then
+      (.restoreTarget | is_integer and . >= 0)
+    else
+      .restoreTarget == null
+    end) and
+    (.brightnessEnabled | type == "boolean") and
+    (.brightnessCompensationEnabled | type == "boolean") and
+    (.compensationPercentOfMaxByPixelCount | type == "object" and
+      (.[ "1" ] | is_integer and . >= 0 and . <= 1000) and
+      (.[ "2" ] | is_integer and . >= 0 and . <= 1000) and
+      (.[ "3" ] | is_integer and . >= 0 and . <= 1000)) and
+    (.pixelShift | type == "boolean") and
+    (.maskEnabled | type == "boolean") and
+    (.pixelShiftMode | type == "string" and
+      (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
+    (.pixelShiftIndex | is_integer and . >= 0) and
+    (if .pixelShiftMode == "fixed" then .pixelShiftIndex == 0
+     elif .pixelShiftMode == "linear-horizontal" or .pixelShiftMode == "linear-vertical" then .pixelShiftIndex <= 1
+     elif .pixelShiftMode == "orbit-2x2" then .pixelShiftIndex <= 3
+     elif .pixelShiftMode == "orbit-3x3" then .pixelShiftIndex <= 8
+     else false end)
+  ' "$state_file" >/dev/null 2>&1
+}
+
 emit_status() {
   local invalid_tooltip="Hyproled: invalid or unsupported state file"
   local shift_state shift_mode shift_index shift_direction
@@ -365,41 +415,8 @@ emit_status() {
     return 0
   fi
 
-  # Do not expose malformed or partially written state to Waybar.
-  if [[ ! -f "$STATE_FILE" || ! -r "$STATE_FILE" ]] || ! jq -e '
-    type == "object" and
-    .version == 5 and
-    (.status == "active" or .status == "applying" or .status == "restoring") and
-    (.phase | type == "number" and floor == . and . >= 0 and . <= 3) and
-    (.offPixels | type == "number" and floor == . and . >= 1 and . <= 3) and
-    (.monitor | type == "number" and floor == . and . >= 0) and
-    (.area == null or (.area | type == "string")) and
-    (.invert | type == "boolean") and
-    (.brightnessOriginal | type == "number" and . >= 0) and
-    (.brightnessMax | type == "number" and . > 0) and
-    (.brightnessApplied | type == "number" and . >= 0) and
-    (.brightnessDevice | type == "string" and length > 0) and
-    (.activeShader | type == "string" and length > 0) and
-    (.previousShader | type == "string") and
-    (.compensationPercent == null or
-      (.compensationPercent | type == "number" and . >= 0)) and
-    (if .status == "restoring" then
-      (.restoreTarget | type == "number" and . >= 0)
-    else true end) and
-    (.brightnessEnabled | type == "boolean") and
-    (.brightnessCompensationEnabled | type == "boolean") and
-    (.compensationPercentOfMaxByPixelCount | type == "object") and
-    (.pixelShift | type == "boolean") and
-    (.maskEnabled | type == "boolean") and
-    (.pixelShiftMode | type == "string" and
-      (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
-    (.pixelShiftIndex | type == "number" and floor == . and . >= 0) and
-    (if .pixelShiftMode == "fixed" then .pixelShiftIndex == 0
-     elif .pixelShiftMode == "linear-horizontal" or .pixelShiftMode == "linear-vertical" then .pixelShiftIndex <= 1
-     elif .pixelShiftMode == "orbit-2x2" then .pixelShiftIndex <= 3
-     elif .pixelShiftMode == "orbit-3x3" then .pixelShiftIndex <= 8
-     else false end)
-  ' "$STATE_FILE" >/dev/null 2>&1; then
+  # Use the same runtime-state contract as load_state().
+  if ! validate_state_file; then
     jq -cn --arg tooltip "$invalid_tooltip" '{
       text: "◌",
       alt: "error",
@@ -904,35 +921,8 @@ TEMP_STATE_FILE=""
 
 load_state() {
   [[ -s "$STATE_FILE" ]] || die "state file is missing or empty: $STATE_FILE"
-  jq -e '
-    type == "object" and
-    .version == 5 and
-    (.status == "active" or .status == "applying" or .status == "restoring") and
-    (.phase | type == "number" and floor == . and . >= 0 and . <= 3) and
-    (.offPixels | type == "number" and . >= 1 and . <= 3) and
-    (.monitor | type == "number" and . >= 0) and
-    (.brightnessOriginal | type == "number" and . >= 0) and
-    (.brightnessMax | type == "number" and . > 0) and
-    (.brightnessApplied | type == "number" and . >= 0) and
-    (.invert | type == "boolean") and
-    (if .status == "restoring" then (.restoreTarget | type == "number" and . >= 0) else true end) and
-    (.brightnessDevice | type == "string" and length > 0) and
-    (.activeShader | type == "string" and length > 0) and
-    (.previousShader | type == "string") and
-    (.brightnessEnabled | type == "boolean") and
-    (.brightnessCompensationEnabled | type == "boolean") and
-    (.compensationPercentOfMaxByPixelCount | type == "object") and
-    (.pixelShift | type == "boolean") and
-    (.maskEnabled | type == "boolean") and
-    (.pixelShiftMode | type == "string" and
-      (. == "fixed" or . == "linear-horizontal" or . == "linear-vertical" or . == "orbit-2x2" or . == "orbit-3x3")) and
-    (.pixelShiftIndex | type == "number" and floor == . and . >= 0) and
-    (if .pixelShiftMode == "fixed" then .pixelShiftIndex == 0
-     elif .pixelShiftMode == "linear-horizontal" or .pixelShiftMode == "linear-vertical" then .pixelShiftIndex <= 1
-     elif .pixelShiftMode == "orbit-2x2" then .pixelShiftIndex <= 3
-     elif .pixelShiftMode == "orbit-3x3" then .pixelShiftIndex <= 8
-     else false end)
-  ' "$STATE_FILE" >/dev/null || die "state file is invalid or unsupported; refusing to change brightness or shader"
+  validate_state_file ||
+    die "state file is invalid or unsupported; refusing to change brightness or shader"
 
   STATUS=$(jq -r '.status' "$STATE_FILE")
   PHASE=$(jq -r '.phase' "$STATE_FILE")
@@ -1136,7 +1126,8 @@ validate_preferences() {
     (.phase | type == "number" and floor == . and . >= 0 and . <= 3) and
     (.offPixels | type == "number" and floor == . and . >= 1 and . <= 3) and
     (.monitor | type == "number" and floor == . and . >= 0) and
-    (.area == null or (.area | type == "string")) and
+    (.area == null or
+      (.area | type == "string" and test("^[0-9]+:[0-9]+:[0-9]+:[0-9]+$"))) and
     (.invert | type == "boolean") and
     (.brightnessCompensationEnabled | type == "boolean")
   ' "$PREFERENCES_FILE" >/dev/null 2>&1 || return 1

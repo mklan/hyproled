@@ -228,6 +228,7 @@ class StatusMaskTests(unittest.TestCase):
                 "brightnessOriginal": 100, "brightnessMax": 528,
                 "brightnessApplied": 110, "brightnessDevice": "intel_backlight",
                 "activeShader": "/tmp/hyproled-test.glsl", "previousShader": "",
+                "restoreTarget": None,
                 "compensationPercent": 10, "brightnessEnabled": True,
                 "brightnessCompensationEnabled": True,
                 "pixelShift": False, "maskEnabled": True,

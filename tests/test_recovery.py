@@ -115,6 +115,92 @@ class RuntimeRollbackTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+class PreferencesValidationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        match = re.search(
+            r"(?ms)^pixel_shift_index_valid\(\) \{\n.*?^\}",
+            SOURCE,
+        )
+        if match is None:
+            raise AssertionError("pixel_shift_index_valid() was not found")
+        cls.index_function = match.group(0)
+
+        match = re.search(
+            r"(?ms)^validate_preferences\(\) \{\n.*?^\}",
+            SOURCE,
+        )
+        if match is None:
+            raise AssertionError("validate_preferences() was not found")
+        cls.validation_function = match.group(0)
+
+    def valid_preferences(self):
+        return {
+            "version": 1,
+            "defaultsHash": "original-defaults-hash",
+            "maskEnabled": True,
+            "pixelShift": False,
+            "pixelShiftMode": "orbit-2x2",
+            "pixelShiftIndex": 0,
+            "phase": 2,
+            "offPixels": 1,
+            "monitor": 0,
+            "area": None,
+            "invert": False,
+            "brightnessCompensationEnabled": True,
+        }
+
+    def run_validation(self, preferences):
+        with tempfile.TemporaryDirectory() as directory:
+            preferences_path = Path(directory) / "preferences.json"
+            preferences_path.write_text(
+                json.dumps(preferences),
+                encoding="utf-8",
+            )
+
+            script = "\n".join((
+                'PREFERENCES_FILE="$1"',
+                self.index_function,
+                self.validation_function,
+                "validate_preferences",
+            )) + "\n"
+
+            result = subprocess.run(
+                ["bash", "-c", script, "hyproled-test", str(preferences_path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        return result.returncode
+
+    def test_null_valid_and_missing_area_are_accepted(self):
+        preferences = self.valid_preferences()
+        self.assertEqual(self.run_validation(preferences), 0)
+
+        preferences["area"] = "10:20:300:400"
+        self.assertEqual(self.run_validation(preferences), 0)
+
+        # Older preferences may omit this optional field; it means full screen.
+        preferences.pop("area")
+        self.assertEqual(self.run_validation(preferences), 0)
+
+    def test_malformed_area_is_rejected(self):
+        for area in (
+            "",
+            "10:20:300",
+            "10:20:300:400;invalid",
+            "10:20:300:400x",
+            42,
+            False,
+        ):
+            with self.subTest(area=area):
+                preferences = self.valid_preferences()
+                preferences["area"] = area
+                self.assertNotEqual(self.run_validation(preferences), 0)
+
+
+@unittest.skipUnless(shutil.which("jq"), "jq is not installed")
 class RuntimeOffRecoveryTests(unittest.TestCase):
     def valid_preferences(self):
         return {
@@ -340,6 +426,17 @@ esac
         )
         self.assertFalse(preferences["maskEnabled"])
         self.assertFalse(preferences["pixelShift"])
+
+    def test_off_preserves_preferences_with_invalid_area(self):
+        preferences = self.valid_preferences()
+        preferences["area"] = "0:0:10:10;invalid"
+        original_preferences = json.dumps(preferences)
+
+        result = self.run_off(preferences)
+
+        self.assert_recovered(result)
+        self.assertEqual(result["preferences"], original_preferences)
+        self.assertIn("preferences", result["stderr"])
 
     def test_off_preserves_manual_brightness_adjustment(self):
         result = self.run_off(
