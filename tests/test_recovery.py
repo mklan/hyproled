@@ -114,6 +114,59 @@ class RuntimeRollbackTests(unittest.TestCase):
         self.assertFalse(result["new_shader_exists"])
 
 
+class ShaderPathOwnershipTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        match = re.search(
+            r"(?ms)^is_our_shader_path\\(\\) \\{\\n.*?^\\}",
+            SOURCE,
+        )
+        if match is None:
+            raise AssertionError("is_our_shader_path() was not found")
+        cls.function = match.group(0)
+
+    def test_only_direct_shader_files_in_state_dir_are_owned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory) / "runtime" / "hyproled"
+            state_dir.mkdir(parents=True)
+
+            valid_path = str(state_dir / "shader.A1b2C3.glsl")
+            nested_path = str(state_dir / "nested" / "shader.A1b2C3.glsl")
+            traversal_path = (
+                f"{state_dir}/shader.fake/../../important.glsl"
+            )
+            outside_path = str(Path(directory) / "shader.A1b2C3.glsl")
+            unrelated_path = str(state_dir / "state.json")
+
+            script = (
+                f"STATE_DIR={shlex.quote(str(state_dir))}\\n"
+                + self.function
+                + '\\nis_our_shader_path "$1"\\n'
+            )
+
+            cases = (
+                (valid_path, True),
+                (nested_path, False),
+                (traversal_path, False),
+                (outside_path, False),
+                (unrelated_path, False),
+            )
+
+            for path, expected in cases:
+                with self.subTest(path=path):
+                    result = subprocess.run(
+                        ["bash", "-c", script, "hyproled-test", path],
+                        cwd=ROOT,
+                        text=True,
+                        capture_output=True,
+                    )
+                    self.assertEqual(
+                        result.returncode == 0,
+                        expected,
+                        result.stdout + result.stderr,
+                    )
+
+
 @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
 class PreferencesValidationTests(unittest.TestCase):
     @classmethod

@@ -1352,8 +1352,13 @@ EOF_MASK
 }
 
 is_our_shader_path() {
-  case "$1" in
-    "$STATE_DIR"/shader.*.glsl) return 0 ;;
+  local path="$1"
+
+  # Match only direct children; case wildcards can also match '/'.
+  [[ "${path%/*}" == "$STATE_DIR" ]] || return 1
+
+  case "${path##*/}" in
+    shader.*.glsl) return 0 ;;
     *) return 1 ;;
   esac
 }
