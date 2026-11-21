@@ -345,7 +345,14 @@ class RuntimeOffRecoveryTests(unittest.TestCase):
             "brightnessCompensationEnabled": True,
         }
 
-    def run_off(self, preferences, *, current_brightness=160):
+    def run_off(
+        self,
+        preferences,
+        *,
+        current_brightness=160,
+        state_overrides=None,
+        current_shader_is_previous=False,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime_dir = root / "runtime"
@@ -366,8 +373,17 @@ class RuntimeOffRecoveryTests(unittest.TestCase):
             active_shader.write_text("test shader", encoding="utf-8")
 
             current_shader_file = root / "current-shader"
+            if current_shader_is_previous:
+                previous_shader = state_dir / "shader.previous.glsl"
+                previous_shader.write_text(
+                    "previous shader", encoding="utf-8"
+                )
+                current_shader = previous_shader
+            else:
+                current_shader = active_shader
+
             current_shader_file.write_text(
-                str(active_shader), encoding="utf-8"
+                str(current_shader), encoding="utf-8"
             )
 
             brightness_file = root / "brightness"
@@ -403,6 +419,9 @@ class RuntimeOffRecoveryTests(unittest.TestCase):
                 "activeShader": str(active_shader),
                 "restoreTarget": None,
             }
+
+            if state_overrides is not None:
+                state.update(state_overrides)
 
             (state_dir / "state.json").write_text(
                 json.dumps(state), encoding="utf-8"
@@ -564,6 +583,60 @@ esac
         self.assert_recovered(result)
         self.assertEqual(result["preferences"], original_preferences)
         self.assertIn("preferences", result["stderr"])
+
+    def test_off_recovers_brightness_restore_before_shader_switch(self):
+        result = self.run_off(
+            self.valid_preferences(),
+            current_brightness=150,
+            state_overrides={
+                "status": "applying",
+                "maskEnabled": False,
+                "pixelShift": True,
+                "restoreTarget": 110,
+            },
+            current_shader_is_previous=True,
+        )
+
+        self.assert_recovered(result)
+        self.assertEqual(result["brightness"], "110")
+
+    def test_off_recovers_brightness_restore_after_shader_switch(self):
+        result = self.run_off(
+            self.valid_preferences(),
+            current_brightness=110,
+            state_overrides={
+                "status": "applying",
+                "maskEnabled": False,
+                "pixelShift": True,
+                "restoreTarget": 110,
+            },
+        )
+
+        self.assert_recovered(result)
+        self.assertEqual(result["brightness"], "110")
+
+    def test_off_rejects_applying_restore_target_without_brightness_ownership(self):
+        result = self.run_off(
+            self.valid_preferences(),
+            current_brightness=160,
+            state_overrides={
+                "status": "applying",
+                "maskEnabled": False,
+                "pixelShift": True,
+                "brightnessEnabled": False,
+                "restoreTarget": 110,
+            },
+        )
+
+        self.assertNotEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertIn("state file is invalid or unsupported", result["stderr"])
+        self.assertTrue(result["state_exists"])
+        self.assertEqual(result["brightness"], "160")
+        self.assertTrue(result["active_shader_exists"])
 
     def test_off_preserves_manual_brightness_adjustment(self):
         result = self.run_off(

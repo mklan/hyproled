@@ -378,6 +378,9 @@ validate_state_file() {
     has("restoreTarget") and
     (if .status == "restoring" then
       (.restoreTarget | is_integer and . >= 0)
+    elif .status == "applying" and .restoreTarget != null then
+      (.restoreTarget | is_integer and . >= 0) and
+      .brightnessEnabled == true
     else
       .restoreTarget == null
     end) and
@@ -1500,11 +1503,19 @@ if [[ "$ACTION" == "off" ]]; then
       set_shader "$PREVIOUS_SHADER" || die "could not restore the previous screen shader; brightness was not changed"
     elif [[ "$current_shader" == "$PREVIOUS_SHADER" ]]; then
       : # Already restored by an interrupted earlier invocation.
+    elif [[ "$STATUS" == "applying" ]] && is_our_shader_path "$current_shader"; then
+      # A crash may leave the previous generated shader active while the
+      # applying state already records the replacement shader path.
+      set_shader "$PREVIOUS_SHADER" || die "could not restore the previous screen shader; brightness was not changed"
     else
       warn "screen shader was changed externally; leaving it untouched: ${current_shader:-<empty>}"
     fi
 
-    if [[ "$BRIGHTNESS_ENABLED" == true ]]; then
+    if [[ "$STATUS" == "applying" && "$RESTORE_TARGET" =~ ^[0-9]+$ ]]; then
+      # The target was persisted before the interrupted brightness write.
+      # Reuse it instead of calculating from a possibly updated brightness.
+      :
+    elif [[ "$BRIGHTNESS_ENABLED" == true ]]; then
       current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'; state is retained"
       if [[ "$STATUS" == "applying" && "$current_brightness" == "$BRIGHTNESS_ORIGINAL" ]]; then
         user_delta=0
@@ -1752,14 +1763,12 @@ if [[ -f "$STATE_FILE" && "$MASK_WAS_ENABLED" == true && "$MASK_ENABLED" == fals
   user_delta=$(( current_brightness - BRIGHTNESS_APPLIED ))
   current_max=$(get_brightness_max) || die "cannot read maximum brightness from '$BRIGHTNESS_DEVICE'"
   RESTORE_TARGET=$(clamp_brightness "$(( BRIGHTNESS_ORIGINAL + user_delta ))" "$current_max")
-  BRIGHTNESS_ENABLED=false
   BRIGHTNESS_RESTORE_REQUESTED=true
 fi
 
 if [[ -f "$STATE_FILE" && "$MASK_WAS_ENABLED" == true && "$MASK_ENABLED" == true && "$BRIGHTNESS_COMPENSATION_SET" == true ]]; then
   if [[ "$BRIGHTNESS_COMPENSATION_ENABLED" == false && "$BRIGHTNESS_ENABLED" == true ]]; then
     RESTORE_TARGET="$BRIGHTNESS_ORIGINAL"
-    BRIGHTNESS_ENABLED=false
     BRIGHTNESS_RESTORE_REQUESTED=true
   elif [[ "$BRIGHTNESS_COMPENSATION_ENABLED" == true && "$BRIGHTNESS_ENABLED" == false ]]; then
     current_brightness=$(get_brightness) || die "cannot read brightness from '$BRIGHTNESS_DEVICE'"
@@ -1827,7 +1836,9 @@ fi
 OLD_ACTIVE_SHADER="$ACTIVE_SHADER"
 ACTIVE_SHADER="$NEW_SHADER"
 STATUS="applying"
-RESTORE_TARGET=""
+if [[ "$BRIGHTNESS_RESTORE_REQUESTED" != true ]]; then
+  RESTORE_TARGET=""
+fi
 if [[ "$MASK_ENABLED" == true &&
       "$MASK_STEP" != true &&
       "$SHADER_ONLY" != true ]]; then
@@ -1849,6 +1860,11 @@ elif [[ "$MASK_ENABLED" == true &&
   BRIGHTNESS_WRITE_ATTEMPTED=true
   actual_brightness=$(set_brightness "$requested_brightness") || die "could not apply brightness compensation"
   BRIGHTNESS_APPLIED="$actual_brightness"
+fi
+
+if [[ "$BRIGHTNESS_RESTORE_REQUESTED" == true ]]; then
+  BRIGHTNESS_ENABLED=false
+  RESTORE_TARGET=""
 fi
 
 STATUS="active"
