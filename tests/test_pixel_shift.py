@@ -1024,11 +1024,11 @@ class RuntimeStateLoadingTests(unittest.TestCase):
             state_path = Path(directory) / "state.json"
             state_path.write_text(json.dumps(state), encoding="utf-8")
 
-            script = (
-                'STATE_FILE="$1"\\n'
-                + self.validate_state_function
-                + '\\nvalidate_state_file "$STATE_FILE"\\n'
-            )
+            script = "\n".join((
+                'STATE_FILE="$1"',
+                self.validate_state_function,
+                'validate_state_file "$STATE_FILE"',
+            )) + "\n"
             result = subprocess.run(
                 ["bash", "-c", script, "hyproled-test", str(state_path)],
                 cwd=ROOT,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
-import re
+import os
 import shutil
 import subprocess
 import tempfile
@@ -29,14 +29,6 @@ class ConfigSchemaTests(unittest.TestCase):
         Draft202012Validator.check_schema(cls.schema)
         cls.validator = Draft202012Validator(cls.schema)
 
-        source = (ROOT / "hyproled").read_text(encoding="utf-8")
-        match = re.search(
-            r"(?ms)^validate_config_file\\(\\) \\{\\n.*?^\\}",
-            source,
-        )
-        if match is None:
-            raise AssertionError("validate_config_file() was not found")
-        cls.validation_function = match.group(0)
 
     def make_config(self, mode, index):
         config = copy.deepcopy(self.example)
@@ -122,6 +114,10 @@ class ConfigSchemaTests(unittest.TestCase):
             ("3x3 orbit", self.make_config("orbit-3x3", 8)),
         ]
 
+        without_schema_hint = copy.deepcopy(self.example)
+        without_schema_hint.pop("$schema", None)
+        valid_cases.append(("omitted schema hint", without_schema_hint))
+
         null_mode = copy.deepcopy(self.example)
         null_mode["defaults"]["pixelShiftMode"] = None
         null_mode["defaults"]["pixelShiftIndex"] = 3
@@ -129,6 +125,7 @@ class ConfigSchemaTests(unittest.TestCase):
 
         invalid_cases = [
             ("non-string schema hint", with_value(("$schema",), 7)),
+            ("null schema hint", with_value(("$schema",), None)),
             ("empty schema hint", with_value(("$schema",), "")),
             ("wrong version", with_value(("version",), 2)),
             ("missing required field", {
@@ -191,13 +188,13 @@ class ConfigSchemaTests(unittest.TestCase):
             config_path = Path(directory) / "config.json"
             config_path.write_text(json.dumps(config), encoding="utf-8")
 
-            script = (
-                self.validation_function
-                + '\\nvalidate_config_file "$1"\\n'
-            )
+            environment = os.environ.copy()
+            environment["HYPROLED_CONFIG"] = str(config_path)
+
             return subprocess.run(
-                ["bash", "-c", script, "hyproled-test", str(config_path)],
+                [str(ROOT / "hyproled"), "--check-config"],
                 cwd=ROOT,
+                env=environment,
                 text=True,
                 capture_output=True,
             )
