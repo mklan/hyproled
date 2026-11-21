@@ -351,7 +351,7 @@ validate_config_file() {
 }
 
 validate_state_file() {
-  local state_file="${1:-$STATE_FILE}"
+  local state_file="$1"
   [[ -f "$state_file" && -s "$state_file" && -r "$state_file" ]] || return 1
 
   jq -e '
@@ -416,7 +416,7 @@ emit_status() {
   fi
 
   # Use the same runtime-state contract as load_state().
-  if ! validate_state_file; then
+  if ! validate_state_file "$STATE_FILE"; then
     jq -cn --arg tooltip "$invalid_tooltip" '{
       text: "◌",
       alt: "error",
@@ -948,7 +948,7 @@ TEMP_STATE_FILE=""
 
 load_state() {
   [[ -s "$STATE_FILE" ]] || die "state file is missing or empty: $STATE_FILE"
-  validate_state_file ||
+  validate_state_file "$STATE_FILE" ||
     die "state file is invalid or unsupported; refusing to change brightness or shader"
 
   STATUS=$(jq -r '.status' "$STATE_FILE")
