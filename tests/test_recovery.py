@@ -823,5 +823,368 @@ esac
         self.assertFalse(result["active_shader_exists"])
 
 
+
+@unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+class BrightnessLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+        self.runtime_dir = self.root / "runtime"
+        self.state_home = self.root / "state"
+        self.home = self.root / "home"
+        self.mock_bin = self.root / "bin"
+
+        for directory in (
+            self.runtime_dir,
+            self.state_home,
+            self.home,
+            self.mock_bin,
+        ):
+            directory.mkdir(parents=True)
+
+        self.state_dir = self.runtime_dir / "hyproled"
+        self.state_file = self.state_dir / "state.json"
+        self.preferences_file = (
+            self.state_home / "hyproled" / "preferences.json"
+        )
+        self.config_file = self.root / "config.json"
+        self.brightness_file = self.root / "brightness"
+        self.shader_file = self.root / "current-shader"
+        self.brightness_log = self.root / "brightness.log"
+        self.fail_next_set_file = self.root / "fail-next-set"
+
+        self.brightness_file.write_text("100", encoding="utf-8")
+        self.shader_file.write_text("", encoding="utf-8")
+
+        config = {
+            "version": 1,
+            "defaults": {
+                "disabledPixels": 1,
+                "monitor": 0,
+                "area": None,
+                "invert": False,
+                "maskEnabled": False,
+                "pixelShift": False,
+                "pixelShiftMode": "orbit-2x2",
+                "pixelShiftIndex": 0,
+                "phase": 0,
+            },
+            "brightness": {
+                "enabled": False,
+                "device": "test_backlight",
+                "compensationPercentOfMaxByPixelCount": {
+                    "1": 10,
+                    "2": 20,
+                    "3": 30,
+                },
+            },
+        }
+        self.config_file.write_text(
+            json.dumps(config),
+            encoding="utf-8",
+        )
+
+        hyprctl = self.mock_bin / "hyprctl"
+        hyprctl.write_text(
+            """#!/usr/bin/env bash
+set -eu
+
+case "${1:-}" in
+  version)
+    printf 'Hyprland 0.53.3\\n'
+    ;;
+  -j)
+    [[ "${2:-}" == "getoption" ]] || exit 2
+    current=$(<"$HYPROLED_TEST_SHADER_FILE")
+    jq -cn --arg value "$current" '{str: $value, set: ($value != "")}'
+    ;;
+  keyword)
+    [[ "${2:-}" == "decoration:screen_shader" ]] || exit 3
+    printf '%s' "${3:-}" > "$HYPROLED_TEST_SHADER_FILE"
+    ;;
+  *)
+    exit 4
+    ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        hyprctl.chmod(0o755)
+
+        brightnessctl = self.mock_bin / "brightnessctl"
+        brightnessctl.write_text(
+            """#!/usr/bin/env bash
+set -eu
+
+[[ "${1:-}" == "-d" ]] || exit 1
+shift 2
+command="${1:-}"
+shift || true
+
+printf '%s' "$command" >> "$HYPROLED_TEST_BRIGHTNESS_LOG"
+for argument in "$@"; do
+  printf ' %s' "$argument" >> "$HYPROLED_TEST_BRIGHTNESS_LOG"
+done
+printf '\\n' >> "$HYPROLED_TEST_BRIGHTNESS_LOG"
+
+case "$command" in
+  get)
+    cat "$HYPROLED_TEST_BRIGHTNESS_FILE"
+    ;;
+  max)
+    printf '500\\n'
+    ;;
+  set)
+    if [[ -e "$HYPROLED_TEST_FAIL_NEXT_SET" ]]; then
+      rm -f -- "$HYPROLED_TEST_FAIL_NEXT_SET"
+      exit 1
+    fi
+    printf '%s\\n' "$1" > "$HYPROLED_TEST_BRIGHTNESS_FILE"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        brightnessctl.chmod(0o755)
+
+        self.environment = os.environ.copy()
+        self.environment.update({
+            "HOME": str(self.home),
+            "XDG_RUNTIME_DIR": str(self.runtime_dir),
+            "XDG_STATE_HOME": str(self.state_home),
+            "HYPROLED_CONFIG": str(self.config_file),
+            "HYPRLAND_INSTANCE_SIGNATURE": "hyproled-test",
+            "HYPROLED_TEST_SHADER_FILE": str(self.shader_file),
+            "HYPROLED_TEST_BRIGHTNESS_FILE": str(self.brightness_file),
+            "HYPROLED_TEST_BRIGHTNESS_LOG": str(self.brightness_log),
+            "HYPROLED_TEST_FAIL_NEXT_SET": str(self.fail_next_set_file),
+            "PATH": (
+                str(self.mock_bin)
+                + os.pathsep
+                + os.environ.get("PATH", "")
+            ),
+        })
+
+    def invoke(self, *arguments):
+        result = subprocess.run(
+            [str(HYPROLED), *arguments],
+            cwd=ROOT,
+            env=self.environment,
+            text=True,
+            capture_output=True,
+        )
+
+        return {
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "state": (
+                json.loads(self.state_file.read_text(encoding="utf-8"))
+                if self.state_file.exists() else None
+            ),
+            "preferences": (
+                json.loads(self.preferences_file.read_text(encoding="utf-8"))
+                if self.preferences_file.exists() else None
+            ),
+            "brightness": self.brightness_file.read_text(
+                encoding="utf-8"
+            ).strip(),
+            "shader": self.shader_file.read_text(encoding="utf-8"),
+            "brightness_log": (
+                self.brightness_log.read_text(encoding="utf-8")
+                if self.brightness_log.exists() else ""
+            ),
+        }
+
+    def enable_compensation(self):
+        result = self.invoke(
+            "--mask",
+            "--pixel-shift",
+            "--brightness-compensation",
+        )
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        return result
+
+    def test_initial_compensation_captures_baseline_before_writing(self):
+        result = self.enable_compensation()
+
+        self.assertEqual(result["brightness"], "150")
+        self.assertEqual(result["state"]["brightnessOriginal"], 100)
+        self.assertEqual(result["state"]["brightnessApplied"], 150)
+        self.assertTrue(result["state"]["brightnessEnabled"])
+        self.assertTrue(
+            result["preferences"]["brightnessCompensationEnabled"]
+        )
+        self.assertIn("get\n", result["brightness_log"])
+        self.assertIn("max\n", result["brightness_log"])
+        self.assertIn("set 150\n", result["brightness_log"])
+
+    def test_compensation_is_clamped_to_device_maximum(self):
+        self.brightness_file.write_text("480", encoding="utf-8")
+
+        result = self.enable_compensation()
+
+        self.assertEqual(result["brightness"], "500")
+        self.assertEqual(result["state"]["brightnessOriginal"], 480)
+        self.assertEqual(result["state"]["brightnessApplied"], 500)
+
+    def test_reconfiguration_preserves_manual_brightness_delta(self):
+        self.enable_compensation()
+        self.brightness_file.write_text("180", encoding="utf-8")
+
+        result = self.invoke("--off-pixels", "2")
+
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertEqual(result["brightness"], "230")
+        self.assertEqual(result["state"]["brightnessOriginal"], 130)
+        self.assertEqual(result["state"]["brightnessApplied"], 230)
+        self.assertEqual(result["state"]["compensationPercent"], 20)
+
+    def test_disabling_compensation_preserves_manual_brightness_delta(self):
+        self.enable_compensation()
+        self.brightness_file.write_text("180", encoding="utf-8")
+
+        result = self.invoke("--no-brightness-compensation")
+
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertEqual(result["brightness"], "130")
+        self.assertEqual(result["state"]["brightnessOriginal"], 130)
+        self.assertEqual(result["state"]["brightnessApplied"], 130)
+        self.assertFalse(result["state"]["brightnessEnabled"])
+        self.assertFalse(
+            result["preferences"]["brightnessCompensationEnabled"]
+        )
+        self.assertTrue(result["state"]["maskEnabled"])
+
+    def test_reenabling_compensation_uses_current_uncompensated_brightness(self):
+        self.enable_compensation()
+        self.brightness_file.write_text("180", encoding="utf-8")
+
+        disabled = self.invoke("--no-brightness-compensation")
+        self.assertEqual(
+            disabled["returncode"],
+            0,
+            disabled["stdout"] + disabled["stderr"],
+        )
+        self.assertEqual(disabled["brightness"], "130")
+
+        result = self.invoke("--brightness-compensation")
+
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertEqual(result["brightness"], "180")
+        self.assertEqual(result["state"]["brightnessOriginal"], 130)
+        self.assertEqual(result["state"]["brightnessApplied"], 180)
+        self.assertTrue(result["state"]["brightnessEnabled"])
+
+    def test_disabling_mask_restores_brightness_while_pixel_shift_remains_active(self):
+        self.enable_compensation()
+        self.brightness_file.write_text("180", encoding="utf-8")
+
+        result = self.invoke("--no-mask")
+
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertEqual(result["brightness"], "130")
+        self.assertFalse(result["state"]["maskEnabled"])
+        self.assertTrue(result["state"]["pixelShift"])
+        self.assertFalse(result["state"]["brightnessEnabled"])
+        self.assertFalse(result["preferences"]["maskEnabled"])
+
+    def test_mask_without_compensation_never_accesses_brightness(self):
+        result = self.invoke(
+            "--mask",
+            "--pixel-shift",
+            "--no-brightness-compensation",
+        )
+
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertEqual(result["brightness_log"], "")
+        self.assertEqual(result["brightness"], "100")
+        self.assertFalse(result["state"]["brightnessEnabled"])
+
+    def test_pixel_shift_only_session_never_accesses_brightness(self):
+        result = self.invoke("--pixel-shift")
+
+        self.assertEqual(
+            result["returncode"],
+            0,
+            result["stdout"] + result["stderr"],
+        )
+        self.assertEqual(result["brightness_log"], "")
+        self.assertEqual(result["brightness"], "100")
+        self.assertFalse(result["state"]["brightnessEnabled"])
+
+    def test_failed_initial_compensation_rolls_back_shader_brightness_and_state(self):
+        self.fail_next_set_file.touch()
+
+        result = self.invoke(
+            "--mask",
+            "--pixel-shift",
+            "--brightness-compensation",
+        )
+
+        self.assertNotEqual(result["returncode"], 0)
+        self.assertIsNone(result["state"])
+        self.assertEqual(result["brightness"], "100")
+        self.assertEqual(result["shader"], "")
+        self.assertFalse(list(self.state_dir.glob("shader.*")))
+        self.assertIn("set 150\n", result["brightness_log"])
+        self.assertIn("set 100\n", result["brightness_log"])
+
+    def test_failed_off_restore_persists_target_for_retry(self):
+        self.enable_compensation()
+        self.fail_next_set_file.touch()
+
+        failed = self.invoke("off")
+
+        self.assertNotEqual(failed["returncode"], 0)
+        self.assertIsNotNone(failed["state"])
+        self.assertEqual(failed["state"]["status"], "restoring")
+        self.assertEqual(failed["state"]["restoreTarget"], 100)
+        self.assertEqual(failed["brightness"], "150")
+        self.assertEqual(failed["shader"], "")
+
+        recovered = self.invoke("off")
+
+        self.assertEqual(
+            recovered["returncode"],
+            0,
+            recovered["stdout"] + recovered["stderr"],
+        )
+        self.assertIsNone(recovered["state"])
+        self.assertEqual(recovered["brightness"], "100")
+        self.assertEqual(recovered["shader"], "")
+
+
+
+
 if __name__ == "__main__":
     unittest.main()
