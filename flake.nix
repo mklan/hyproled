@@ -33,7 +33,7 @@
 
             hyproledPackage = pkgs.stdenvNoCC.mkDerivation {
                 pname = "hyproled";
-                version = "0.4.0-dev";
+                version = pkgs.lib.removeSuffix "\n" (builtins.readFile ./version.txt);
 
                 src = self;
                 dontUnpack = true;
@@ -48,6 +48,10 @@
                     install -Dm755 \
                         "$src/hyproled" \
                         "$out/bin/hyproled"
+
+                    install -Dm644 \
+                        "$src/version.txt" \
+                        "$out/share/hyproled/version.txt"
 
                     install -d \
                         "$out/share/hyproled/icons"

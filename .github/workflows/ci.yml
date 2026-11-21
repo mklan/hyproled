@@ -124,8 +124,24 @@ jobs:
       - name: Check Flake outputs
         run: nix flake check --no-build
 
-      - name: Build package
-        run: nix build --no-link --print-out-paths ".#packages.${{ matrix.system }}.hyproled"
+      - name: Build package and verify its version
+        env:
+          EXPECTED_SYSTEM: ${{ matrix.system }}
+        run: |
+          expected_version="$(< version.txt)"
+          package_version="$(nix eval --raw ".#packages.${EXPECTED_SYSTEM}.hyproled.version")"
+          package_path="$(nix build --no-link --print-out-paths ".#packages.${EXPECTED_SYSTEM}.hyproled")"
+          runtime_version="$("$package_path/bin/hyproled" --version)"
+
+          if [[ "$package_version" != "$expected_version" ]]; then
+            echo "::error::Nix package version mismatch: expected $expected_version, found $package_version"
+            exit 1
+          fi
+
+          if [[ "$runtime_version" != "hyproled $expected_version" ]]; then
+            echo "::error::Installed CLI version mismatch: expected hyproled $expected_version, found $runtime_version"
+            exit 1
+          fi
 
   static-analysis:
     name: Static analysis

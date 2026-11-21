@@ -45,6 +45,30 @@ class CliParserTests(unittest.TestCase):
             f"stderr:\n{result.stderr}",
         )
 
+    def test_version_uses_version_file_outside_repository(self):
+        expected_version = (
+            ROOT / "version.txt"
+        ).read_text(encoding="utf-8").strip()
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [str(HYPROLED), "--version"],
+                cwd=directory,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            result.stdout + result.stderr,
+        )
+        self.assertEqual(
+            result.stdout,
+            f"hyproled {expected_version}\n",
+        )
+
     def test_area_can_only_be_specified_once_across_short_and_long_forms(self):
         cases = (
             ("--area=1:2:3:4", "-a", "5:6:7:8"),

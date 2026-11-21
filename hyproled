@@ -3,7 +3,44 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION="0.4.0"
+read_application_version() {
+  local script_path script_dir version_file version
+
+  script_path="${BASH_SOURCE[0]}"
+
+  if [[ "$script_path" == */* ]]; then
+    script_dir="${script_path%/*}"
+  else
+    script_dir="."
+  fi
+
+  script_dir=$(cd -- "$script_dir" && pwd -P) || return 1
+
+  version_file="$script_dir/version.txt"
+  if [[ ! -r "$version_file" ]]; then
+    version_file="$script_dir/../share/hyproled/version.txt"
+  fi
+
+  if [[ ! -r "$version_file" ]]; then
+    printf 'hyproled: cannot locate version.txt\n' >&2
+    return 1
+  fi
+
+  if ! IFS= read -r version < "$version_file"; then
+    if [[ -z "$version" ]]; then
+      printf 'hyproled: cannot read version.txt\n' >&2
+      return 1
+    fi
+  fi
+
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'hyproled: invalid version in %s\n' "$version_file" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$version"
+}
+
  RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 STATE_DIR="$RUNTIME_DIR/hyproled"
 STATE_FILE="$STATE_DIR/state.json"
@@ -594,6 +631,7 @@ while (($#)); do
       ;;
 
     --version)
+      VERSION="$(read_application_version)" || exit 1
       printf 'hyproled %s\n' "$VERSION"
       exit 0
       ;;
