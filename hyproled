@@ -1268,7 +1268,6 @@ get_current_shader() {
 lua_long_string() {
   local value="$1" equals=""
 
-  # Select a Lua long-string delimiter that cannot terminate inside the path.
   while [[ "$value" == *"]${equals}]"* ]]; do
     equals+="="
   done

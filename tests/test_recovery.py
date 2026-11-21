@@ -168,8 +168,8 @@ class LuaShaderPathTests(unittest.TestCase):
             ("/tmp/runtime]]/and]=]/shader.glsl", "[==[", "]==]"),
             (
                 "/tmp/runtime]]/and]=]/and]==]/shader.glsl",
-                "[===",
-                "]==]",
+                "[===[",
+                "]===]",
             ),
             (
                 '/tmp/runtime]]; os.execute("unexpected") --/shader.glsl',
