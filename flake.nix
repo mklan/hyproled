@@ -106,6 +106,8 @@
                     jq
                     util-linux
                     brightnessctl
+                    glslang
+                    (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.jsonschema ]))
                 ];
             };
         });
