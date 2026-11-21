@@ -1020,15 +1020,19 @@ class RuntimeStateLoadingTests(unittest.TestCase):
         return result.stdout.splitlines()
 
     def run_validate_state(self, state):
+        return self.run_validate_state_document(json.dumps(state))
+
+    def run_validate_state_document(self, document):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
-            state_path.write_text(json.dumps(state), encoding="utf-8")
+            state_path.write_text(document, encoding="utf-8")
 
             script = "\n".join((
                 'STATE_FILE="$1"',
                 self.validate_state_function,
                 'validate_state_file "$STATE_FILE"',
             )) + "\n"
+
             result = subprocess.run(
                 ["bash", "-c", script, "hyproled-test", str(state_path)],
                 cwd=ROOT,
@@ -1163,82 +1167,192 @@ class RuntimeStateLoadingTests(unittest.TestCase):
 
     def test_validate_state_file_accepts_boundaries_and_recovery_states(self):
         base = RuntimeStatusTests().create_state(5)
-        base.update({
-            "phase": 3,
-            "offPixels": 3,
-            "brightnessOriginal": 0,
-            "brightnessMax": 1,
-            "brightnessApplied": 0,
-            "compensationPercent": 1000,
-            "compensationPercentOfMaxByPixelCount": {
-                "1": 0,
-                "2": 1000,
-                "3": 1000,
-            },
-        })
 
-        mode_boundaries = (
-            ("fixed", 0),
-            ("linear-horizontal", 1),
-            ("linear-vertical", 1),
-            ("orbit-2x2", 3),
-            ("orbit-3x3", 8),
+        valid_fields = (
+            ("phase minimum", {"phase": 0}),
+            ("phase maximum", {"phase": 3}),
+            ("pixel count minimum", {"offPixels": 1}),
+            ("pixel count maximum", {"offPixels": 3}),
+            ("monitor minimum", {"monitor": 0}),
+            ("large monitor ID", {"monitor": 2147483647}),
+            ("null area", {"area": None}),
+            ("valid area", {"area": "0:0:1:1"}),
+            ("zero brightness baseline", {"brightnessOriginal": 0}),
+            ("minimum brightness maximum", {"brightnessMax": 1}),
+            ("zero applied brightness", {"brightnessApplied": 0}),
+            ("empty previous shader", {"previousShader": ""}),
+            ("minimum compensation", {"compensationPercent": 0}),
+            ("maximum compensation", {"compensationPercent": 1000}),
+            (
+                "minimum compensation map",
+                {"compensationPercentOfMaxByPixelCount": {
+                    "1": 0, "2": 0, "3": 0,
+                }},
+            ),
+            (
+                "maximum compensation map",
+                {"compensationPercentOfMaxByPixelCount": {
+                    "1": 1000, "2": 1000, "3": 1000,
+                }},
+            ),
+            (
+                "boolean false values",
+                {
+                    "invert": False,
+                    "pixelShift": False,
+                    "maskEnabled": False,
+                    "brightnessCompensationEnabled": False,
+                    "brightnessEnabled": False,
+                },
+            ),
+            ("unknown properties", {"futureStateField": {"value": True}}),
         )
-        for mode, index in mode_boundaries:
-            with self.subTest(mode=mode, index=index):
+
+        for label, updates in valid_fields:
+            with self.subTest(case=label):
                 state = base.copy()
-                state["pixelShiftMode"] = mode
-                state["pixelShiftIndex"] = index
+                state.update(updates)
                 self.assertEqual(self.run_validate_state(state), 0)
 
-        applying = base.copy()
-        applying.update({
-            "status": "applying",
-            "brightnessEnabled": True,
-            "restoreTarget": 0,
-        })
-        self.assertEqual(self.run_validate_state(applying), 0)
+        valid_modes = (
+            ("fixed", (0,)),
+            ("linear-horizontal", (0, 1)),
+            ("linear-vertical", (0, 1)),
+            ("orbit-2x2", (0, 1, 2, 3)),
+            ("orbit-3x3", tuple(range(9))),
+        )
 
-        restoring = base.copy()
-        restoring.update({
-            "status": "restoring",
-            "restoreTarget": 0,
-        })
-        self.assertEqual(self.run_validate_state(restoring), 0)
+        for mode, indices in valid_modes:
+            for index in indices:
+                with self.subTest(mode=mode, index=index):
+                    state = base.copy()
+                    state["pixelShiftMode"] = mode
+                    state["pixelShiftIndex"] = index
+                    self.assertEqual(self.run_validate_state(state), 0)
+
+        # restoreTarget is conditional on the state transition.
+        valid_status_cases = (
+            (
+                "active without brightness ownership",
+                {"status": "active", "restoreTarget": None,
+                 "brightnessEnabled": False},
+            ),
+            (
+                "active with brightness ownership",
+                {"status": "active", "restoreTarget": None,
+                 "brightnessEnabled": True},
+            ),
+            (
+                "applying before ownership",
+                {"status": "applying", "restoreTarget": None,
+                 "brightnessEnabled": False},
+            ),
+            (
+                "applying after ownership",
+                {"status": "applying", "restoreTarget": 0,
+                 "brightnessEnabled": True},
+            ),
+            (
+                "restoring with brightness ownership",
+                {"status": "restoring", "restoreTarget": 0,
+                 "brightnessEnabled": True},
+            ),
+            (
+                "restoring without brightness ownership flag",
+                {"status": "restoring", "restoreTarget": 0,
+                 "brightnessEnabled": False},
+            ),
+        )
+
+        for label, updates in valid_status_cases:
+            with self.subTest(case=label):
+                state = base.copy()
+                state.update(updates)
+                self.assertEqual(self.run_validate_state(state), 0)
 
     def test_validate_state_file_rejects_invalid_fields_and_missing_keys(self):
         base = RuntimeStatusTests().create_state(5)
         invalid_cases = (
             ("version", 4),
+            ("version", "5"),
+            ("version", True),
             ("status", "idle"),
+            ("status", None),
             ("phase", -1),
             ("phase", 4),
+            ("phase", 1.5),
+            ("phase", "1"),
+            ("phase", None),
             ("offPixels", 0),
             ("offPixels", 4),
+            ("offPixels", 1.5),
+            ("offPixels", "1"),
+            ("offPixels", None),
             ("monitor", -1),
             ("monitor", 0.5),
+            ("monitor", "0"),
+            ("monitor", None),
             ("area", "0:0:10"),
+            ("area", ""),
+            ("area", 42),
             ("invert", 0),
+            ("invert", "false"),
+            ("invert", None),
             ("brightnessOriginal", -1),
+            ("brightnessOriginal", 1.5),
+            ("brightnessOriginal", "100"),
             ("brightnessMax", 0),
+            ("brightnessMax", -1),
+            ("brightnessMax", 1.5),
+            ("brightnessMax", "528"),
             ("brightnessApplied", -1),
+            ("brightnessApplied", 1.5),
+            ("brightnessApplied", "100"),
             ("brightnessDevice", ""),
+            ("brightnessDevice", None),
+            ("brightnessDevice", 42),
             ("activeShader", ""),
+            ("activeShader", None),
+            ("activeShader", False),
             ("previousShader", None),
+            ("previousShader", False),
             ("compensationPercent", -1),
             ("compensationPercent", 1001),
+            ("compensationPercent", 0.5),
+            ("compensationPercent", "10"),
             ("restoreTarget", 100),
             ("brightnessEnabled", 0),
+            ("brightnessEnabled", None),
             ("brightnessCompensationEnabled", 0),
+            ("brightnessCompensationEnabled", "false"),
+            ("compensationPercentOfMaxByPixelCount", None),
+            ("compensationPercentOfMaxByPixelCount", {}),
             (
                 "compensationPercentOfMaxByPixelCount",
                 {"1": 10, "2": "20", "3": 30},
             ),
+            (
+                "compensationPercentOfMaxByPixelCount",
+                {"1": 10, "2": 20, "3": 1001},
+            ),
+            (
+                "compensationPercentOfMaxByPixelCount",
+                {"1": 10, "2": 20.5, "3": 30},
+            ),
             ("pixelShift", 0),
+            ("pixelShift", "true"),
+            ("pixelShift", None),
             ("maskEnabled", 0),
+            ("maskEnabled", "false"),
+            ("maskEnabled", None),
             ("pixelShiftMode", "unknown"),
+            ("pixelShiftMode", None),
+            ("pixelShiftMode", 2),
             ("pixelShiftIndex", -1),
             ("pixelShiftIndex", 9),
+            ("pixelShiftIndex", 1.5),
+            ("pixelShiftIndex", "1"),
+            ("pixelShiftIndex", None),
         )
         for field, value in invalid_cases:
             with self.subTest(field=field, value=value):
@@ -1290,6 +1404,83 @@ class RuntimeStateLoadingTests(unittest.TestCase):
         restoring_without_target = base.copy()
         restoring_without_target["status"] = "restoring"
         self.assertNotEqual(self.run_validate_state(restoring_without_target), 0)
+
+        invalid_restore_cases = (
+            (
+                "applying target without brightness ownership",
+                {"status": "applying", "restoreTarget": 0,
+                 "brightnessEnabled": False},
+            ),
+            (
+                "applying negative target",
+                {"status": "applying", "restoreTarget": -1,
+                 "brightnessEnabled": True},
+            ),
+            (
+                "applying fractional target",
+                {"status": "applying", "restoreTarget": 10.5,
+                 "brightnessEnabled": True},
+            ),
+            (
+                "applying string target",
+                {"status": "applying", "restoreTarget": "10",
+                 "brightnessEnabled": True},
+            ),
+            (
+                "restoring negative target",
+                {"status": "restoring", "restoreTarget": -1},
+            ),
+            (
+                "restoring fractional target",
+                {"status": "restoring", "restoreTarget": 10.5},
+            ),
+            (
+                "restoring string target",
+                {"status": "restoring", "restoreTarget": "10"},
+            ),
+            (
+                "restoring boolean target",
+                {"status": "restoring", "restoreTarget": True},
+            ),
+        )
+
+        for label, updates in invalid_restore_cases:
+            with self.subTest(case=label):
+                state = base.copy()
+                state.update(updates)
+                self.assertNotEqual(self.run_validate_state(state), 0)
+
+        invalid_mode_indices = (
+            ("fixed", 1),
+            ("linear-horizontal", 2),
+            ("linear-vertical", 2),
+            ("orbit-2x2", 4),
+            ("orbit-3x3", 9),
+        )
+
+        for mode, index in invalid_mode_indices:
+            with self.subTest(mode=mode, index=index):
+                state = base.copy()
+                state["pixelShiftMode"] = mode
+                state["pixelShiftIndex"] = index
+                self.assertNotEqual(self.run_validate_state(state), 0)
+
+    def test_validate_state_file_rejects_invalid_documents(self):
+        invalid_documents = (
+            "",
+            "{",
+            "null",
+            "[]",
+            "42",
+            '"runtime state"',
+        )
+
+        for document in invalid_documents:
+            with self.subTest(document=document):
+                self.assertNotEqual(
+                    self.run_validate_state_document(document),
+                    0,
+                )
 
     def test_save_state_persists_v5_mode_and_index(self):
         with tempfile.TemporaryDirectory() as directory:

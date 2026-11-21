@@ -278,12 +278,12 @@ class PreferencesValidationTests(unittest.TestCase):
         }
 
     def run_validation(self, preferences):
+        return self.run_validation_document(json.dumps(preferences))
+
+    def run_validation_document(self, document):
         with tempfile.TemporaryDirectory() as directory:
             preferences_path = Path(directory) / "preferences.json"
-            preferences_path.write_text(
-                json.dumps(preferences),
-                encoding="utf-8",
-            )
+            preferences_path.write_text(document, encoding="utf-8")
 
             script = "\n".join((
                 'PREFERENCES_FILE="$1"',
@@ -327,28 +327,31 @@ class PreferencesValidationTests(unittest.TestCase):
                 self.assertNotEqual(self.run_validation(preferences), 0)
 
     def test_pixel_shift_mode_index_boundaries_are_enforced(self):
-        valid_cases = (
-            ("fixed", 0),
-            ("linear-horizontal", 1),
-            ("linear-vertical", 1),
-            ("orbit-2x2", 3),
-            ("orbit-3x3", 8),
+        valid_modes = (
+            ("fixed", (0,)),
+            ("linear-horizontal", (0, 1)),
+            ("linear-vertical", (0, 1)),
+            ("orbit-2x2", (0, 1, 2, 3)),
+            ("orbit-3x3", tuple(range(9))),
         )
-        for mode, index in valid_cases:
-            with self.subTest(mode=mode, index=index):
-                preferences = self.valid_preferences()
-                preferences["pixelShiftMode"] = mode
-                preferences["pixelShiftIndex"] = index
-                self.assertEqual(self.run_validation(preferences), 0)
 
-        invalid_cases = (
+        for mode, indices in valid_modes:
+            for index in indices:
+                with self.subTest(mode=mode, index=index):
+                    preferences = self.valid_preferences()
+                    preferences["pixelShiftMode"] = mode
+                    preferences["pixelShiftIndex"] = index
+                    self.assertEqual(self.run_validation(preferences), 0)
+
+        invalid_modes = (
             ("fixed", 1),
             ("linear-horizontal", 2),
             ("linear-vertical", 2),
             ("orbit-2x2", 4),
             ("orbit-3x3", 9),
         )
-        for mode, index in invalid_cases:
+
+        for mode, index in invalid_modes:
             with self.subTest(mode=mode, index=index):
                 preferences = self.valid_preferences()
                 preferences["pixelShiftMode"] = mode
@@ -398,6 +401,98 @@ class PreferencesValidationTests(unittest.TestCase):
                 preferences = self.valid_preferences()
                 preferences[field] = value
                 self.assertNotEqual(self.run_validation(preferences), 0)
+
+    def test_all_preference_fields_follow_their_value_contract(self):
+        valid_cases = (
+            ("empty defaults hash", "defaultsHash", ""),
+            ("mask disabled", "maskEnabled", False),
+            ("pixel shift enabled", "pixelShift", True),
+            ("phase minimum", "phase", 0),
+            ("phase maximum", "phase", 3),
+            ("pixel count minimum", "offPixels", 1),
+            ("pixel count maximum", "offPixels", 3),
+            ("monitor minimum", "monitor", 0),
+            ("large monitor ID", "monitor", 2147483647),
+            ("invert enabled", "invert", True),
+            ("brightness compensation disabled",
+             "brightnessCompensationEnabled", False),
+        )
+
+        for label, field, value in valid_cases:
+            with self.subTest(case=label):
+                preferences = self.valid_preferences()
+                preferences[field] = value
+                self.assertEqual(self.run_validation(preferences), 0)
+
+        invalid_cases = (
+            ("fractional version", "version", 1.5),
+            ("string version", "version", "1"),
+            ("null version", "version", None),
+            ("null defaults hash", "defaultsHash", None),
+            ("numeric defaults hash", "defaultsHash", 123),
+            ("boolean defaults hash", "defaultsHash", True),
+            ("null mask flag", "maskEnabled", None),
+            ("integer mask flag", "maskEnabled", 1),
+            ("string mask flag", "maskEnabled", "true"),
+            ("null shift flag", "pixelShift", None),
+            ("integer shift flag", "pixelShift", 0),
+            ("null shift mode", "pixelShiftMode", None),
+            ("non-string shift mode", "pixelShiftMode", 1),
+            ("unknown shift mode", "pixelShiftMode", "unknown"),
+            ("string shift index", "pixelShiftIndex", "1"),
+            ("null shift index", "pixelShiftIndex", None),
+            ("boolean shift index", "pixelShiftIndex", True),
+            ("fractional shift index", "pixelShiftIndex", 1.5),
+            ("negative shift index", "pixelShiftIndex", -1),
+            ("shift index overflow", "pixelShiftIndex", 9),
+            ("string phase", "phase", "1"),
+            ("null phase", "phase", None),
+            ("fractional phase", "phase", 1.5),
+            ("negative phase", "phase", -1),
+            ("phase overflow", "phase", 4),
+            ("string pixel count", "offPixels", "1"),
+            ("null pixel count", "offPixels", None),
+            ("fractional pixel count", "offPixels", 1.5),
+            ("negative monitor", "monitor", -1),
+            ("fractional monitor", "monitor", 0.5),
+            ("string monitor", "monitor", "0"),
+            ("null monitor", "monitor", None),
+            ("integer invert", "invert", 0),
+            ("string invert", "invert", "false"),
+            ("null invert", "invert", None),
+            ("integer brightness flag",
+             "brightnessCompensationEnabled", 0),
+            ("null brightness flag",
+             "brightnessCompensationEnabled", None),
+        )
+
+        for label, field, value in invalid_cases:
+            with self.subTest(case=label):
+                preferences = self.valid_preferences()
+                preferences[field] = value
+                self.assertNotEqual(self.run_validation(preferences), 0)
+
+        # Unknown fields remain permitted for forward compatibility.
+        preferences = self.valid_preferences()
+        preferences["futurePreference"] = {"enabled": True}
+        self.assertEqual(self.run_validation(preferences), 0)
+
+    def test_invalid_preference_documents_are_rejected(self):
+        invalid_documents = (
+            "",
+            "{",
+            "null",
+            "[]",
+            "42",
+            '"preferences"',
+        )
+
+        for document in invalid_documents:
+            with self.subTest(document=document):
+                self.assertNotEqual(
+                    self.run_validation_document(document),
+                    0,
+                )
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
