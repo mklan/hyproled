@@ -741,7 +741,8 @@ while (($#)); do
       ;;
 
     --)
-      LONG_ARGS+=("$@")
+      shift
+      (($# == 0)) || die "unexpected argument after --: $1"
       break
       ;;
 

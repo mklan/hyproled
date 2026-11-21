@@ -212,6 +212,21 @@ class CompositeShaderTests(unittest.TestCase):
         self.assertNotEqual(parser_regression.returncode, 0)
         self.assertIn("unknown option: -z", parser_regression.stderr)
 
+        # The option terminator must prevent action and option parsing.
+        for arguments in (["--", "off"], ["--", "--status"]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    ["bash", str(HYPROLED), *arguments],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "unexpected argument after --",
+                    result.stderr,
+                )
+
         invalid_options = [
             (["--pixel-shift-mode", "unknown"], "invalid Pixel Shift mode"),
             (["--area=invalid"], "invalid area"),
