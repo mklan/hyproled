@@ -245,6 +245,43 @@ class CompositeShaderTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(expected_error, result.stderr)
 
+        repeated_value_options = [
+            (["--area=0:0:10:10", "--area=1:1:20:20"],
+             "--area may only be specified once"),
+            (["--area", "0:0:10:10", "-a", "1:1:20:20"],
+             "--area may only be specified once"),
+            (["-a", "0:0:10:10", "--area=1:1:20:20"],
+             "--area may only be specified once"),
+            (["--monitor=0", "--monitor=1"],
+             "--monitor may only be specified once"),
+            (["--monitor", "0", "-m", "1"],
+             "--monitor may only be specified once"),
+            (["-m", "0", "--monitor=1"],
+             "--monitor may only be specified once"),
+            (["--off-pixels=1", "--off-pixels=2"],
+             "pixel count may only be specified once"),
+            (["-o", "1", "-o", "2"],
+             "pixel count may only be specified once"),
+            (["--off-pixels=1", "--disabled-pixels=2"],
+             "pixel count may only be specified once"),
+            (["--disabled-pixels=2", "--off-pixels=1"],
+             "pixel count may only be specified once"),
+            (["-o", "1", "--disabled-pixels=2"],
+             "pixel count may only be specified once"),
+            (["--disabled-pixels=2", "-o", "1"],
+             "pixel count may only be specified once"),
+        ]
+        for arguments, expected_error in repeated_value_options:
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    ["bash", str(HYPROLED), *arguments],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr)
+
         conflicting_options = [
             ["-s", "--shift-step"],
             ["-s", "--mask-step"],

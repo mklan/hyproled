@@ -599,12 +599,16 @@ while (($#)); do
 
     --area)
       (($# >= 2)) || die "--area requires x:y:w:h"
-      LONG_ARGS+=("-a" "$2")
+      [[ "$AREA_SET" == false ]] || die "--area may only be specified once"
+      CLI_AREA="$2"
+      AREA_SET=true
       shift 2
       ;;
 
     --area=*)
-      LONG_ARGS+=("-a" "${1#*=}")
+      [[ "$AREA_SET" == false ]] || die "--area may only be specified once"
+      CLI_AREA="${1#*=}"
+      AREA_SET=true
       shift
       ;;
 
@@ -633,12 +637,18 @@ while (($#)); do
 
     --off-pixels)
       (($# >= 2)) || die "--off-pixels requires 1, 2, or 3"
-      LONG_ARGS+=("-o" "$2")
+      [[ "$OFF_PIXELS_SET" == false ]] || die "pixel count may only be specified once"
+      CLI_OFF_PIXELS="$2"
+      OFF_PIXELS_SET=true
+      OFF_PIXELS_ENABLE_MASK=true
       shift 2
       ;;
 
     --off-pixels=*)
-      LONG_ARGS+=("-o" "${1#*=}")
+      [[ "$OFF_PIXELS_SET" == false ]] || die "pixel count may only be specified once"
+      CLI_OFF_PIXELS="${1#*=}"
+      OFF_PIXELS_SET=true
+      OFF_PIXELS_ENABLE_MASK=true
       shift
       ;;
 
@@ -649,12 +659,16 @@ while (($#)); do
 
     --monitor)
       (($# >= 2)) || die "--monitor requires a non-negative ID"
-      LONG_ARGS+=("-m" "$2")
+      [[ "$MONITOR_SET" == false ]] || die "--monitor may only be specified once"
+      CLI_MONITOR="$2"
+      MONITOR_SET=true
       shift 2
       ;;
 
     --monitor=*)
-      LONG_ARGS+=("-m" "${1#*=}")
+      [[ "$MONITOR_SET" == false ]] || die "--monitor may only be specified once"
+      CLI_MONITOR="${1#*=}"
+      MONITOR_SET=true
       shift
       ;;
 
@@ -792,19 +806,32 @@ else
   OPTIND=1
   while getopts ":a:io:sm:h" opt; do
     case "$opt" in
-      a) CLI_AREA="$OPTARG"; AREA_SET=true ;;
+      a)
+        [[ "$AREA_SET" == false ]] || die "--area may only be specified once"
+        CLI_AREA="$OPTARG"
+        AREA_SET=true
+        ;;
       i)
         [[ "$INVERT_SET" == false || "$CLI_INVERT" == true ]] ||
           die "-i conflicts with --no-invert"
         CLI_INVERT=true
         INVERT_SET=true
         ;;
-      o) CLI_OFF_PIXELS="$OPTARG"; OFF_PIXELS_SET=true ;;
+      o)
+        [[ "$OFF_PIXELS_SET" == false ]] || die "pixel count may only be specified once"
+        CLI_OFF_PIXELS="$OPTARG"
+        OFF_PIXELS_SET=true
+        OFF_PIXELS_ENABLE_MASK=true
+        ;;
       s)
         [[ "$STEP_ALL" == false ]] || die "-s may only be specified once"
         STEP_ALL=true
         ;;
-      m) CLI_MONITOR="$OPTARG"; MONITOR_SET=true ;;
+      m)
+        [[ "$MONITOR_SET" == false ]] || die "--monitor may only be specified once"
+        CLI_MONITOR="$OPTARG"
+        MONITOR_SET=true
+        ;;
       h) show_help; exit 0 ;;
       :) die "option -$OPTARG requires an argument" ;;
       \?) show_help; die "unknown option: -$OPTARG" ;;
