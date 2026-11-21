@@ -1229,7 +1229,7 @@ load_preferences() {
 }
 
 setup_hyprland() {
-  local version_text major minor eval_probe sock sig
+  local version_text major minor eval_probe eval_status=0 sock sig
   export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 
   if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
@@ -1244,15 +1244,26 @@ setup_hyprland() {
   version_text=$(hyprctl version 2>&1) || die "cannot connect to a running Hyprland instance: $version_text"
   [[ "$version_text" == *Hyprland* ]] || die "cannot identify the running Hyprland version: $version_text"
 
-  USE_EVAL=false
   if [[ "$version_text" =~ Hyprland[[:space:]]+([0-9]+)\.([0-9]+) ]]; then
     major=${BASH_REMATCH[1]}
     minor=${BASH_REMATCH[2]}
-    if (( major > 0 || minor >= 55 )); then
-      eval_probe=$(hyprctl eval '' 2>&1 || true)
-      if [[ "$eval_probe" != *"only supported with the lua config manager"* ]]; then
-        USE_EVAL=true
-      fi
+  else
+    die "cannot parse the running Hyprland version: $version_text"
+  fi
+
+  USE_EVAL=false
+
+  # Hyprland 0.55-0.56 can use either config provider. Detect the active
+  # provider instead of assuming that every version >= 0.55 uses Lua.
+  if (( major > 0 || minor >= 55 )); then
+    eval_probe=$(hyprctl eval '' 2>&1) || eval_status=$?
+
+    if [[ "$eval_probe" == "ok" && "$eval_status" -eq 0 ]]; then
+      USE_EVAL=true
+    elif [[ "$eval_probe" == *"eval is only supported with the lua config manager"* ]]; then
+      USE_EVAL=false
+    else
+      die "cannot determine the active Hyprland config API for '$version_text' (hyprctl eval probe: ${eval_probe:-<empty response>}, exit status: $eval_status)"
     fi
   fi
 }
