@@ -118,7 +118,7 @@ class ShaderPathOwnershipTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         match = re.search(
-            r"(?ms)^is_our_shader_path\\(\\) \\{\\n.*?^\\}",
+            r"(?ms)^is_our_shader_path\(\) \{\n.*?^\}",
             SOURCE,
         )
         if match is None:
@@ -139,9 +139,9 @@ class ShaderPathOwnershipTests(unittest.TestCase):
             unrelated_path = str(state_dir / "state.json")
 
             script = (
-                f"STATE_DIR={shlex.quote(str(state_dir))}\\n"
+                f"STATE_DIR={shlex.quote(str(state_dir))}\n"
                 + self.function
-                + '\\nis_our_shader_path "$1"\\n'
+                + '\nis_our_shader_path "$1"\n'
             )
 
             cases = (
