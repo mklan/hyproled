@@ -254,7 +254,7 @@ class CompositeShaderTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(version.returncode, 0, version.stderr)
-        self.assertIn(f"hyproled {self.version_from_source()}", version.stdout)
+        self.assertIn(f"hyproled {self.version_from_file()}", version.stdout)
 
         # A consumed value must not hide a later short option.
         parser_regression = subprocess.run(
@@ -375,11 +375,11 @@ class CompositeShaderTests(unittest.TestCase):
         )
 
     @staticmethod
-    def version_from_source():
-        for line in SOURCE.splitlines():
-            if line.startswith('VERSION="'):
-                return line.split('"', 2)[1]
-        raise AssertionError("VERSION declaration not found")
+    def version_from_file():
+        version = (ROOT / "version.txt").read_text(encoding="utf-8").strip()
+        if not version:
+            raise AssertionError("version.txt is empty")
+        return version
 
     def test_all_pixel_shift_positions_compile(self):
         validator = shutil.which("glslangValidator")
