@@ -243,6 +243,8 @@ class CompositeShaderTests(unittest.TestCase):
             ["off", "--no-invert"],
             ["--invert", "--no-invert"],
             ["--no-invert", "-i"],
+            ["--area=0:0:10:10", "--full-screen"],
+            ["--full-screen", "--area=0:0:10:10"],
             ["--check-config", "--no-invert"],
             ["--check-config", "--area=0:0:10:10"],
         ]
@@ -255,6 +257,18 @@ class CompositeShaderTests(unittest.TestCase):
                     capture_output=True,
                 )
                 self.assertNotEqual(result.returncode, 0)
+
+        status_conflict = subprocess.run(
+            ["bash", str(HYPROLED), "--status", "--invert"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertNotEqual(status_conflict.returncode, 0)
+        self.assertIn(
+            "'status' does not accept effect options",
+            status_conflict.stderr,
+        )
 
     @staticmethod
     def version_from_source():
@@ -680,6 +694,25 @@ class RuntimeStatusTests(unittest.TestCase):
         self.assertNotIn("brightness-enabled", payload["class"])
         self.assertIn("Brightness compensation: disabled", payload["tooltip"])
         self.assertIn("Brightness: unchanged", payload["tooltip"])
+
+    def test_status_without_runtime_state_reports_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = os.environ.copy()
+            env["XDG_RUNTIME_DIR"] = directory
+
+            result = subprocess.run(
+                [str(HYPROLED), "--status"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["alt"], "disabled")
+            self.assertEqual(payload["class"], ["disabled"])
+            self.assertFalse((Path(directory) / "hyproled").exists())
 
     def test_v5_pixel_shift_only(self):
         with tempfile.TemporaryDirectory() as directory:

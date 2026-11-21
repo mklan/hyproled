@@ -646,6 +646,11 @@ while (($#)); do
       shift
       ;;
 
+    --status)
+      LONG_ARGS+=("--status")
+      shift
+      ;;
+
     --mask)
       [[ "$MASK_SET" == false ]] || die "--mask and --no-mask are mutually exclusive"
       MASK_SET=true
@@ -828,7 +833,9 @@ if [[ "$ACTION" == "enable" ]]; then
       die "--pixel-shift-mode cannot be combined with --no-pixel-shift"
     fi
   fi
-  if [[ "$AREA_SET" == true && ! "$CLI_AREA" =~ ^[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+  if [[ "$AREA_SET" == true &&
+        "$FULL_SCREEN_SET" != true &&
+        ! "$CLI_AREA" =~ ^[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
     die "invalid area '$CLI_AREA'; expected x:y:w:h using non-negative integers"
   fi
   if [[ "$OFF_PIXELS_SET" == true && ! "$CLI_OFF_PIXELS" =~ ^[1-3]$ ]]; then
