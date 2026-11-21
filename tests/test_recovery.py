@@ -326,6 +326,79 @@ class PreferencesValidationTests(unittest.TestCase):
                 preferences["area"] = area
                 self.assertNotEqual(self.run_validation(preferences), 0)
 
+    def test_pixel_shift_mode_index_boundaries_are_enforced(self):
+        valid_cases = (
+            ("fixed", 0),
+            ("linear-horizontal", 1),
+            ("linear-vertical", 1),
+            ("orbit-2x2", 3),
+            ("orbit-3x3", 8),
+        )
+        for mode, index in valid_cases:
+            with self.subTest(mode=mode, index=index):
+                preferences = self.valid_preferences()
+                preferences["pixelShiftMode"] = mode
+                preferences["pixelShiftIndex"] = index
+                self.assertEqual(self.run_validation(preferences), 0)
+
+        invalid_cases = (
+            ("fixed", 1),
+            ("linear-horizontal", 2),
+            ("linear-vertical", 2),
+            ("orbit-2x2", 4),
+            ("orbit-3x3", 9),
+        )
+        for mode, index in invalid_cases:
+            with self.subTest(mode=mode, index=index):
+                preferences = self.valid_preferences()
+                preferences["pixelShiftMode"] = mode
+                preferences["pixelShiftIndex"] = index
+                self.assertNotEqual(self.run_validation(preferences), 0)
+
+    def test_required_fields_and_value_ranges_are_enforced(self):
+        required_fields = (
+            "version",
+            "defaultsHash",
+            "maskEnabled",
+            "pixelShift",
+            "pixelShiftMode",
+            "pixelShiftIndex",
+            "phase",
+            "offPixels",
+            "monitor",
+            "invert",
+            "brightnessCompensationEnabled",
+        )
+        for field in required_fields:
+            with self.subTest(missing=field):
+                preferences = self.valid_preferences()
+                del preferences[field]
+                self.assertNotEqual(self.run_validation(preferences), 0)
+
+        invalid_cases = (
+            ("version", 2),
+            ("defaultsHash", 42),
+            ("maskEnabled", 1),
+            ("pixelShift", "true"),
+            ("pixelShiftMode", "unsupported"),
+            ("pixelShiftIndex", -1),
+            ("pixelShiftIndex", 9),
+            ("pixelShiftIndex", 1.5),
+            ("phase", -1),
+            ("phase", 4),
+            ("offPixels", 0),
+            ("offPixels", 4),
+            ("monitor", -1),
+            ("monitor", 0.5),
+            ("invert", 0),
+            ("brightnessCompensationEnabled", "true"),
+        )
+        for field, value in invalid_cases:
+            with self.subTest(field=field, value=value):
+                preferences = self.valid_preferences()
+                preferences[field] = value
+                self.assertNotEqual(self.run_validation(preferences), 0)
+
 
 @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
 class RuntimeOffRecoveryTests(unittest.TestCase):

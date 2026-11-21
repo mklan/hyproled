@@ -1019,6 +1019,24 @@ class RuntimeStateLoadingTests(unittest.TestCase):
         self.assertEqual(result.returncode, expected_returncode, result.stdout + result.stderr)
         return result.stdout.splitlines()
 
+    def run_validate_state(self, state):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            script = (
+                'STATE_FILE="$1"\\n'
+                + self.validate_state_function
+                + '\\nvalidate_state_file "$STATE_FILE"\\n'
+            )
+            result = subprocess.run(
+                ["bash", "-c", script, "hyproled-test", str(state_path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+        return result.returncode
+
     def run_pixel_shift_only_predicate(self, state):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
@@ -1142,6 +1160,136 @@ class RuntimeStateLoadingTests(unittest.TestCase):
             self.run_load_state(state),
             ["true", "false", "false", "orbit-2x2", "0"],
         )
+
+    def test_validate_state_file_accepts_boundaries_and_recovery_states(self):
+        base = RuntimeStatusTests().create_state(5)
+        base.update({
+            "phase": 3,
+            "offPixels": 3,
+            "brightnessOriginal": 0,
+            "brightnessMax": 1,
+            "brightnessApplied": 0,
+            "compensationPercent": 1000,
+            "compensationPercentOfMaxByPixelCount": {
+                "1": 0,
+                "2": 1000,
+                "3": 1000,
+            },
+        })
+
+        mode_boundaries = (
+            ("fixed", 0),
+            ("linear-horizontal", 1),
+            ("linear-vertical", 1),
+            ("orbit-2x2", 3),
+            ("orbit-3x3", 8),
+        )
+        for mode, index in mode_boundaries:
+            with self.subTest(mode=mode, index=index):
+                state = base.copy()
+                state["pixelShiftMode"] = mode
+                state["pixelShiftIndex"] = index
+                self.assertEqual(self.run_validate_state(state), 0)
+
+        applying = base.copy()
+        applying.update({
+            "status": "applying",
+            "brightnessEnabled": True,
+            "restoreTarget": 0,
+        })
+        self.assertEqual(self.run_validate_state(applying), 0)
+
+        restoring = base.copy()
+        restoring.update({
+            "status": "restoring",
+            "restoreTarget": 0,
+        })
+        self.assertEqual(self.run_validate_state(restoring), 0)
+
+    def test_validate_state_file_rejects_invalid_fields_and_missing_keys(self):
+        base = RuntimeStatusTests().create_state(5)
+        invalid_cases = (
+            ("version", 4),
+            ("status", "idle"),
+            ("phase", -1),
+            ("phase", 4),
+            ("offPixels", 0),
+            ("offPixels", 4),
+            ("monitor", -1),
+            ("monitor", 0.5),
+            ("area", "0:0:10"),
+            ("invert", 0),
+            ("brightnessOriginal", -1),
+            ("brightnessMax", 0),
+            ("brightnessApplied", -1),
+            ("brightnessDevice", ""),
+            ("activeShader", ""),
+            ("previousShader", None),
+            ("compensationPercent", -1),
+            ("compensationPercent", 1001),
+            ("restoreTarget", 100),
+            ("brightnessEnabled", 0),
+            ("brightnessCompensationEnabled", 0),
+            (
+                "compensationPercentOfMaxByPixelCount",
+                {"1": 10, "2": "20", "3": 30},
+            ),
+            ("pixelShift", 0),
+            ("maskEnabled", 0),
+            ("pixelShiftMode", "unknown"),
+            ("pixelShiftIndex", -1),
+            ("pixelShiftIndex", 9),
+        )
+        for field, value in invalid_cases:
+            with self.subTest(field=field, value=value):
+                state = base.copy()
+                state[field] = value
+                self.assertNotEqual(self.run_validate_state(state), 0)
+
+        missing_fields = (
+            "version",
+            "status",
+            "phase",
+            "offPixels",
+            "monitor",
+            "area",
+            "invert",
+            "brightnessOriginal",
+            "brightnessMax",
+            "brightnessApplied",
+            "brightnessDevice",
+            "activeShader",
+            "previousShader",
+            "compensationPercent",
+            "restoreTarget",
+            "brightnessEnabled",
+            "brightnessCompensationEnabled",
+            "compensationPercentOfMaxByPixelCount",
+            "pixelShift",
+            "maskEnabled",
+            "pixelShiftMode",
+            "pixelShiftIndex",
+        )
+        for field in missing_fields:
+            with self.subTest(missing=field):
+                state = base.copy()
+                del state[field]
+                self.assertNotEqual(self.run_validate_state(state), 0)
+
+        applying_without_brightness_ownership = base.copy()
+        applying_without_brightness_ownership.update({
+            "status": "applying",
+            "restoreTarget": 100,
+            "brightnessEnabled": False,
+        })
+        self.assertNotEqual(
+            self.run_validate_state(applying_without_brightness_ownership),
+            0,
+        )
+
+        restoring_without_target = base.copy()
+        restoring_without_target["status"] = "restoring"
+        self.assertNotEqual(self.run_validate_state(restoring_without_target), 0)
 
     def test_save_state_persists_v5_mode_and_index(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +28,15 @@ class ConfigSchemaTests(unittest.TestCase):
         )
         Draft202012Validator.check_schema(cls.schema)
         cls.validator = Draft202012Validator(cls.schema)
+
+        source = (ROOT / "hyproled").read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^validate_config_file\\(\\) \\{\\n.*?^\\}",
+            source,
+        )
+        if match is None:
+            raise AssertionError("validate_config_file() was not found")
+        cls.validation_function = match.group(0)
 
     def make_config(self, mode, index):
         config = copy.deepcopy(self.example)
@@ -77,7 +90,6 @@ class ConfigSchemaTests(unittest.TestCase):
             ("linear-vertical", 2),
             ("orbit-2x2", 4),
             ("orbit-3x3", 9),
-            (None, 4),
             (None, 4),  # Missing mode means orbit-2x2.
         )
 
@@ -87,6 +99,108 @@ class ConfigSchemaTests(unittest.TestCase):
                 self.assertTrue(
                     list(self.validator.iter_errors(config))
                 )
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_production_validator_matches_schema_contract(self):
+        def with_value(path, value):
+            config = copy.deepcopy(self.example)
+            target = config
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            return config
+
+        valid_cases = [
+            ("example", copy.deepcopy(self.example)),
+            ("unknown properties", with_value(("futureOption",), True)),
+            ("omitted mode with boundary index", self.make_config(None, 3)),
+            ("omitted mode with default index", self.make_config(None, None)),
+            ("fixed mode", self.make_config("fixed", 0)),
+            ("horizontal mode", self.make_config("linear-horizontal", 1)),
+            ("vertical mode", self.make_config("linear-vertical", 1)),
+            ("2x2 orbit", self.make_config("orbit-2x2", 3)),
+            ("3x3 orbit", self.make_config("orbit-3x3", 8)),
+        ]
+
+        null_mode = copy.deepcopy(self.example)
+        null_mode["defaults"]["pixelShiftMode"] = None
+        null_mode["defaults"]["pixelShiftIndex"] = 3
+        valid_cases.append(("explicit null mode", null_mode))
+
+        invalid_cases = [
+            ("non-string schema hint", with_value(("$schema",), 7)),
+            ("empty schema hint", with_value(("$schema",), "")),
+            ("wrong version", with_value(("version",), 2)),
+            ("missing required field", {
+                **copy.deepcopy(self.example),
+                "defaults": {
+                    key: value
+                    for key, value in self.example["defaults"].items()
+                    if key != "invert"
+                },
+            }),
+            ("pixel count below range", with_value(("defaults", "disabledPixels"), 0)),
+            ("fractional monitor", with_value(("defaults", "monitor"), 0.5)),
+            ("malformed area", with_value(("defaults", "area"), "1:2:3")),
+            ("invalid fixed index", self.make_config("fixed", 1)),
+            ("invalid horizontal index", self.make_config("linear-horizontal", 2)),
+            ("invalid vertical index", self.make_config("linear-vertical", 2)),
+            ("invalid 2x2 index", self.make_config("orbit-2x2", 4)),
+            ("invalid 3x3 index", self.make_config("orbit-3x3", 9)),
+            ("invalid phase", with_value(("defaults", "phase"), 4)),
+            ("empty brightness device", with_value(("brightness", "device"), "")),
+            (
+                "compensation above range",
+                with_value(
+                    ("brightness", "compensationPercentOfMaxByPixelCount", "2"),
+                    1001,
+                ),
+            ),
+        ]
+
+        with self.subTest(case="valid"):
+            for label, config in valid_cases:
+                with self.subTest(case=label):
+                    self.assertTrue(
+                        self.validator.is_valid(config),
+                        f"JSON Schema rejected {label}",
+                    )
+                    result = self.run_production_validator(config)
+                    self.assertEqual(
+                        result.returncode,
+                        0,
+                        f"Production validator rejected {label}: {result.stderr}",
+                    )
+
+        with self.subTest(case="invalid"):
+            for label, config in invalid_cases:
+                with self.subTest(case=label):
+                    self.assertFalse(
+                        self.validator.is_valid(config),
+                        f"JSON Schema accepted {label}",
+                    )
+                    result = self.run_production_validator(config)
+                    self.assertNotEqual(
+                        result.returncode,
+                        0,
+                        f"Production validator accepted {label}",
+                    )
+
+    def run_production_validator(self, config):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            script = (
+                self.validation_function
+                + '\\nvalidate_config_file "$1"\\n'
+            )
+            return subprocess.run(
+                ["bash", "-c", script, "hyproled-test", str(config_path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
 
     def test_schema_accepts_explicit_null_mode_as_default_mode(self):
         config = copy.deepcopy(self.example)
