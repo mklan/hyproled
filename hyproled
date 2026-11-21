@@ -951,6 +951,7 @@ PREVIOUS_SHADER=""
 ACTIVE_SHADER=""
 RESTORE_TARGET=""
 TEMP_STATE_FILE=""
+TEMP_PREFERENCES_FILE=""
 
 load_state() {
   [[ -s "$STATE_FILE" ]] || die "state file is missing or empty: $STATE_FILE"
@@ -1113,6 +1114,7 @@ save_preferences() {
   chmod 700 "$PREFERENCES_DIR"
   [[ -O "$PREFERENCES_DIR" ]] || die "preferences directory is not owned by the current user: $PREFERENCES_DIR"
   tmp=$(mktemp "$PREFERENCES_DIR/preferences.XXXXXX")
+  TEMP_PREFERENCES_FILE="$tmp"
   if ! jq -n \
     --arg defaultsHash "$DEFAULTS_HASH" \
     --arg pixelShiftMode "$PIXEL_SHIFT_MODE" \
@@ -1143,7 +1145,8 @@ save_preferences() {
     return 1
   fi
   chmod 600 "$tmp" || { rm -f -- "$tmp"; return 1; }
-  mv -f -- "$tmp" "$PREFERENCES_FILE"
+  mv -f -- "$tmp" "$PREFERENCES_FILE" || return 1
+  TEMP_PREFERENCES_FILE=""
 }
 
 validate_preferences() {
@@ -1428,6 +1431,9 @@ on_exit() {
   fi
   if [[ -n "$TEMP_STATE_FILE" && -f "$TEMP_STATE_FILE" ]]; then
     rm -f -- "$TEMP_STATE_FILE"
+  fi
+  if [[ -n "$TEMP_PREFERENCES_FILE" && -f "$TEMP_PREFERENCES_FILE" ]]; then
+    rm -f -- "$TEMP_PREFERENCES_FILE"
   fi
   if [[ "$OP_COMMITTED" != true && "$KEEP_NEW_SHADER" != true && -n "$NEW_SHADER" && -f "$NEW_SHADER" ]]; then
     rm -f -- "$NEW_SHADER"
