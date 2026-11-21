@@ -158,6 +158,58 @@ class CompositeShaderTests(unittest.TestCase):
             shader,
         )
 
+    def test_pixel_shift_remains_full_monitor_when_mask_area_is_restricted(self):
+        for invert in (False, True):
+            with self.subTest(invert=invert), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / f"area-invert-{invert}.frag"
+                script = (
+                    self.function
+                    + "\\nMONITOR=2\\n"
+                    + "PHASE=0\\n"
+                    + "OFF_PIXELS=1\\n"
+                    + "MASK_ENABLED=true\\n"
+                    + "PIXEL_SHIFT=true\\n"
+                    + "PIXEL_SHIFT_DX=1\\n"
+                    + "PIXEL_SHIFT_DY=-1\\n"
+                    + 'AREA="10:20:300:40"\\n'
+                    + f"INVERT={'true' if invert else 'false'}\\n"
+                    + 'make_shader "$1"\\n'
+                )
+
+                result = subprocess.run(
+                    ["bash", "-c", script, "hyproled-test", str(path)],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(
+                    result.returncode, 0, result.stdout + result.stderr
+                )
+
+                shader = path.read_text(encoding="utf-8")
+                self.assertIn("if(wl_output != 2) {", shader)
+
+                pass_through = shader.index(
+                    "fragColor = texture(tex, v_texcoord);"
+                )
+                pass_return = shader.index("return;", pass_through)
+                shift_sampling = shader.index(
+                    "ivec2 sourceTexel = texel - ivec2(1, -1);"
+                )
+                mask_region = shader.index("bool inRegion = ")
+
+                self.assertLess(pass_through, pass_return)
+                self.assertLess(pass_return, shift_sampling)
+                self.assertLess(shift_sampling, mask_region)
+
+                expected_output = (
+                    "fragColor = inRegion ? orig : pixel;"
+                    if invert
+                    else "fragColor = inRegion ? pixel : orig;"
+                )
+                self.assertIn(expected_output, shader)
+                self.assertIn("bool off =", shader)
+
     def test_zero_offset_keeps_the_original_sampling_path(self):
         with tempfile.TemporaryDirectory() as directory:
             shader = self.generate(

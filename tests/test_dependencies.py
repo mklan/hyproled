@@ -367,6 +367,280 @@ esac
             state = json.loads(state_file.read_text(encoding="utf-8"))
             self.assertEqual(state["phase"], 1)
 
+    def test_pixel_shift_mode_change_resets_index_and_persists_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, state_file = self.create_environment(
+                Path(directory),
+                mask_enabled=False,
+                pixel_shift_enabled=True,
+            )
+
+            start = self.run_hyproled(["--pixel-shift"], env)
+            self.assertEqual(
+                start.returncode, 0, start.stdout + start.stderr
+            )
+
+            for expected_index in (1, 2):
+                advance = self.run_hyproled(["--shift-step"], env)
+                self.assertEqual(
+                    advance.returncode, 0, advance.stdout + advance.stderr
+                )
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                self.assertEqual(state["pixelShiftIndex"], expected_index)
+
+            change_mode = self.run_hyproled(
+                ["--pixel-shift-mode", "orbit-3x3"],
+                env,
+            )
+            self.assertEqual(
+                change_mode.returncode,
+                0,
+                change_mode.stdout + change_mode.stderr,
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertTrue(state["pixelShift"])
+            self.assertFalse(state["maskEnabled"])
+            self.assertEqual(state["pixelShiftMode"], "orbit-3x3")
+            self.assertEqual(state["pixelShiftIndex"], 0)
+
+            preferences_file = (
+                Path(env["XDG_STATE_HOME"])
+                / "hyproled"
+                / "preferences.json"
+            )
+            preferences = json.loads(
+                preferences_file.read_text(encoding="utf-8")
+            )
+            self.assertEqual(preferences["pixelShiftMode"], "orbit-3x3")
+            self.assertEqual(preferences["pixelShiftIndex"], 0)
+            self.assertTrue(preferences["pixelShift"])
+
+            shader = Path(state["activeShader"]).read_text(encoding="utf-8")
+            self.assertIn(
+                "vec4 orig = texture(tex, v_texcoord);",
+                shader,
+            )
+            self.assertNotIn("texelFetch(tex, sourceTexel, 0)", shader)
+
+            advance = self.run_hyproled(["--shift-step"], env)
+            self.assertEqual(
+                advance.returncode, 0, advance.stdout + advance.stderr
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(state["pixelShiftIndex"], 1)
+
+            shader = Path(state["activeShader"]).read_text(encoding="utf-8")
+            self.assertIn(
+                "ivec2 sourceTexel = texel - ivec2(1, 0);",
+                shader,
+            )
+
+            preferences = json.loads(
+                preferences_file.read_text(encoding="utf-8")
+            )
+            self.assertEqual(preferences["pixelShiftIndex"], 1)
+
+    def test_mask_and_pixel_shift_transitions_preserve_independent_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env, state_file = self.create_environment(
+                root,
+                mask_enabled=True,
+                pixel_shift_enabled=False,
+            )
+
+            start = self.run_hyproled(
+                ["--no-brightness-compensation"],
+                env,
+            )
+            self.assertEqual(
+                start.returncode, 0, start.stdout + start.stderr
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertTrue(state["maskEnabled"])
+            self.assertFalse(state["pixelShift"])
+            self.assertFalse(state["brightnessEnabled"])
+
+            enable_shift = self.run_hyproled(["--pixel-shift"], env)
+            self.assertEqual(
+                enable_shift.returncode,
+                0,
+                enable_shift.stdout + enable_shift.stderr,
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertTrue(state["maskEnabled"])
+            self.assertTrue(state["pixelShift"])
+
+            mask_step = self.run_hyproled(["--mask-step"], env)
+            self.assertEqual(
+                mask_step.returncode, 0, mask_step.stdout + mask_step.stderr
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(state["phase"], 1)
+            self.assertEqual(state["pixelShiftIndex"], 0)
+
+            shift_step = self.run_hyproled(["--shift-step"], env)
+            self.assertEqual(
+                shift_step.returncode, 0, shift_step.stdout + shift_step.stderr
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(state["phase"], 1)
+            self.assertEqual(state["pixelShiftIndex"], 1)
+
+            disable_shift = self.run_hyproled(["--no-pixel-shift"], env)
+            self.assertEqual(
+                disable_shift.returncode,
+                0,
+                disable_shift.stdout + disable_shift.stderr,
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertTrue(state["maskEnabled"])
+            self.assertFalse(state["pixelShift"])
+            self.assertEqual(state["phase"], 1)
+            self.assertEqual(state["pixelShiftIndex"], 1)
+
+            shader = Path(state["activeShader"]).read_text(encoding="utf-8")
+            self.assertNotIn("texelFetch(tex, sourceTexel, 0)", shader)
+            self.assertIn("bool off =", shader)
+
+            change_mode = self.run_hyproled(
+                ["--pixel-shift-mode", "orbit-3x3"],
+                env,
+            )
+            self.assertEqual(
+                change_mode.returncode,
+                0,
+                change_mode.stdout + change_mode.stderr,
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertTrue(state["maskEnabled"])
+            self.assertFalse(state["pixelShift"])
+            self.assertEqual(state["pixelShiftMode"], "orbit-3x3")
+            self.assertEqual(state["pixelShiftIndex"], 0)
+
+            enable_shift = self.run_hyproled(["--pixel-shift"], env)
+            self.assertEqual(
+                enable_shift.returncode,
+                0,
+                enable_shift.stdout + enable_shift.stderr,
+            )
+
+            shift_step = self.run_hyproled(["--shift-step"], env)
+            self.assertEqual(
+                shift_step.returncode, 0, shift_step.stdout + shift_step.stderr
+            )
+
+            disable_mask = self.run_hyproled(["--no-mask"], env)
+            self.assertEqual(
+                disable_mask.returncode,
+                0,
+                disable_mask.stdout + disable_mask.stderr,
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertFalse(state["maskEnabled"])
+            self.assertTrue(state["pixelShift"])
+            self.assertEqual(state["pixelShiftMode"], "orbit-3x3")
+            self.assertEqual(state["pixelShiftIndex"], 1)
+            self.assertFalse(state["brightnessEnabled"])
+
+            shader = Path(state["activeShader"]).read_text(encoding="utf-8")
+            self.assertIn(
+                "ivec2 sourceTexel = texel - ivec2(1, 0);",
+                shader,
+            )
+            self.assertNotIn("bool off =", shader)
+
+            disable_shift = self.run_hyproled(["--no-pixel-shift"], env)
+            self.assertEqual(
+                disable_shift.returncode,
+                0,
+                disable_shift.stdout + disable_shift.stderr,
+            )
+
+            self.assertFalse(state_file.exists())
+            self.assertEqual(
+                Path(env["HYPROLED_TEST_SHADER_FILE"]).read_text(
+                    encoding="utf-8"
+                ),
+                "",
+            )
+
+            preferences_file = (
+                Path(env["XDG_STATE_HOME"])
+                / "hyproled"
+                / "preferences.json"
+            )
+            preferences = json.loads(
+                preferences_file.read_text(encoding="utf-8")
+            )
+            self.assertFalse(preferences["maskEnabled"])
+            self.assertFalse(preferences["pixelShift"])
+            self.assertEqual(preferences["pixelShiftMode"], "orbit-3x3")
+            self.assertEqual(preferences["pixelShiftIndex"], 1)
+
+    def test_restore_reapplies_pixel_shift_after_shader_reset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, state_file = self.create_environment(
+                Path(directory),
+                mask_enabled=False,
+                pixel_shift_enabled=True,
+            )
+
+            start = self.run_hyproled(["--pixel-shift"], env)
+            self.assertEqual(
+                start.returncode, 0, start.stdout + start.stderr
+            )
+
+            advance = self.run_hyproled(["--shift-step"], env)
+            self.assertEqual(
+                advance.returncode, 0, advance.stdout + advance.stderr
+            )
+
+            previous_state = json.loads(
+                state_file.read_text(encoding="utf-8")
+            )
+            previous_shader = Path(previous_state["activeShader"])
+            self.assertTrue(previous_shader.is_file())
+
+            # Simulate Hyprland restarting and losing its runtime shader.
+            Path(env["HYPROLED_TEST_SHADER_FILE"]).write_text(
+                "",
+                encoding="utf-8",
+            )
+
+            restore = self.run_hyproled(["--restore"], env)
+            self.assertEqual(
+                restore.returncode, 0, restore.stdout + restore.stderr
+            )
+
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertTrue(state["pixelShift"])
+            self.assertFalse(state["maskEnabled"])
+            self.assertEqual(state["pixelShiftMode"], "orbit-2x2")
+            self.assertEqual(state["pixelShiftIndex"], 1)
+
+            current_shader = Path(env["HYPROLED_TEST_SHADER_FILE"]).read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(current_shader, state["activeShader"])
+            self.assertTrue(Path(current_shader).is_file())
+            self.assertFalse(previous_shader.exists())
+
+            shader = Path(current_shader).read_text(encoding="utf-8")
+            self.assertIn(
+                "ivec2 sourceTexel = texel - ivec2(1, 0);",
+                shader,
+            )
+
     def test_enabling_compensation_still_requires_brightnessctl(self):
         with tempfile.TemporaryDirectory() as directory:
             env, state_file = self.create_environment(
