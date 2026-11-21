@@ -1265,10 +1265,23 @@ get_current_shader() {
   return 1
 }
 
+lua_long_string() {
+  local value="$1" equals=""
+
+  # Select a Lua long-string delimiter that cannot terminate inside the path.
+  while [[ "$value" == *"]${equals}]"* ]]; do
+    equals+="="
+  done
+
+  printf '[%s[%s]%s]' "$equals" "$value" "$equals"
+}
+
+
 set_shader() {
-  local path="$1" output="" actual=""
+  local path="$1" output="" actual="" lua_path=""
   if [[ "$USE_EVAL" == true ]]; then
-    output=$(hyprctl eval "hl.config({ decoration = { screen_shader = [[$path]] } })" 2>&1) || {
+    lua_path=$(lua_long_string "$path") || return 1
+    output=$(hyprctl eval "hl.config({ decoration = { screen_shader = ${lua_path} } })" 2>&1) || {
       printf 'hyproled: hyprctl eval failed: %s\n' "$output" >&2
       return 1
     }

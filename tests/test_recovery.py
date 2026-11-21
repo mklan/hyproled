@@ -114,6 +114,80 @@ class RuntimeRollbackTests(unittest.TestCase):
         self.assertFalse(result["new_shader_exists"])
 
 
+class LuaShaderPathTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.functions = []
+
+        for name in ("lua_long_string", "set_shader"):
+            pattern = (
+                r"(?ms)^"
+                + re.escape(name)
+                + r"\(\) \{\n.*?^\}"
+            )
+            match = re.search(pattern, SOURCE)
+
+            if match is None:
+                raise AssertionError(f"{name}() was not found")
+
+            cls.functions.append(match.group(0))
+
+    def run_set_shader(self, path):
+        with tempfile.TemporaryDirectory() as directory:
+            capture_file = Path(directory) / "eval-expression"
+
+            script = "\n".join((
+                f"CAPTURE_FILE={shlex.quote(str(capture_file))}",
+                'EXPECTED_PATH="$1"',
+                "USE_EVAL=true",
+                'hyprctl() { [[ "${1:-}" == "eval" ]] || return 1; printf "%s" "${2:-}" > "$CAPTURE_FILE"; }',
+                'get_current_shader() { printf "%s\\n" "$EXPECTED_PATH"; }',
+                *self.functions,
+                'set_shader "$EXPECTED_PATH"',
+            )) + "\n"
+
+            result = subprocess.run(
+                ["bash", "-c", script, "hyproled-test", path],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(
+                result.returncode,
+                0,
+                result.stdout + result.stderr,
+            )
+
+            return capture_file.read_text(encoding="utf-8")
+
+    def test_eval_path_uses_a_non_terminating_lua_delimiter(self):
+        cases = (
+            ("/tmp/shader.glsl", "[[", "]]"),
+            ("/tmp/runtime]]/shader.glsl", "[=[", "]=]"),
+            ("/tmp/runtime]]/and]=]/shader.glsl", "[==[", "]==]"),
+            (
+                "/tmp/runtime]]/and]=]/and]==]/shader.glsl",
+                "[===",
+                "]==]",
+            ),
+            (
+                '/tmp/runtime]]; os.execute("unexpected") --/shader.glsl',
+                "[=[",
+                "]=]",
+            ),
+        )
+
+        for path, opening, closing in cases:
+            with self.subTest(path=path):
+                expected = (
+                    "hl.config({ decoration = { screen_shader = "
+                    f"{opening}{path}{closing}"
+                    " } })"
+                )
+                self.assertEqual(self.run_set_shader(path), expected)
+
+
 class ShaderPathOwnershipTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
